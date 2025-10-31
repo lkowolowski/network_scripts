@@ -1,2 +1,1 @@
-# network_scripts
-Misc Network Scripts
+Misc Juniper related scripts
