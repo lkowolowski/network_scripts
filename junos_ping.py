@@ -28,13 +28,13 @@ from jnpr.junos.exception import (
 
 def main():
     """main"""
-    username="automation"
 
     parser = argparse.ArgumentParser(usage='junos_ping.py -d <hostname> -r <routing-instance> -t <target>')
     parser.add_argument('-d', '--device', help='Enter a Juniper device (name or IP) to ping from')
     parser.add_argument('-c', '--count', help='Enter the number of pnigs to send')
     parser.add_argument('-i', '--routing_instance', help='Enter the routing-instance')
     parser.add_argument('-t', '--target', help='Enter the target IP to ping')
+    parser.add_argument('-u', '--username', help='Username to connect as')
     args = parser.parse_args()
 
     if not args.device:
@@ -56,6 +56,11 @@ def main():
         routing_instance="default"
     else:
         routing_instance=args.routing_instance
+
+    if args.username is None:
+        username="automation"
+    else:
+        username=args.username
 
     # connect to the device with IP-address, login user and passwort
     dev = Device(host=device, user=username,
