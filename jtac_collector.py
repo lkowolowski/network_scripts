@@ -65,7 +65,7 @@ def collect_coredumps(dev):
         print("No core dumps to collect")
 
 # list of functions we'll call to generate and then collect the data
-def collect_rsi(dev):
+def collect_rsi(dev, is_vc_cluster, is_srx_cluster):
     """collect 'request support information'"""
     # File to create on remote device
     file = "/var/tmp/"+date+"_"+dev.hostname+"_rsi.txt"
@@ -76,7 +76,13 @@ def collect_rsi(dev):
     # and will give an error about being unable to iterate None type
     ss = StartShell(dev)
     ss.open()
-    ss.run('cli -c "request support information | save "'+file)
+    # find a way to collect this from all members in a cluster
+    if is_vc_cluster is True:
+        ss.run('cli -c "request support information all-members | save "'+file)
+    elif is_srx_cluster is True:
+        ss.run('cli -c "request support information all-members | save "'+file)
+    else:
+        ss.run('cli -c "request support information | save "'+file)
     ss.close()
 
     # Copy file to localhost
@@ -87,16 +93,16 @@ def collect_rsi(dev):
 
     print("Done")
 
-def collect_logs(dev):
+def collect_logs(dev, is_vc_cluster, is_srx_cluster):
     """collect logs"""
     # File to create on remote device
-    file = "/var/tmp/"+date+"_"+dev.hostname+"_varlog.tgz"
+    file = "/var/tmp/" + date + "_" + dev.hostname + "_varlog.tgz"
 
 
     # Compress /var/log/ to /var/tmp/pyez_varlog.tgz
     print("Compressing /var/log/*")
     file_system = FS(dev)
-    file_system.tgz("/var/log/*",file)
+    file_system.tgz("/var/log/*", file)
 
     # Copy file to localhost
     copy_file(dev,file)
@@ -105,6 +111,33 @@ def collect_logs(dev):
     delete_file(dev,file)
 
     print("Done")
+
+def collect_chassis(dev, is_vc_cluster, is_srx_cluster):
+    """collect chassis information"""
+    # file to create on remote device
+    file = "/var/tmp/" + date + "_" + dev.hostname + "_chassis.txt"
+
+    print("Collecting Chassis Informatin")
+    ss = StartShell(dev)
+    ss.open()
+    ss.run('cli -c "show chassis fpc pic-status | save "' + file)
+    if is_vc_cluster is True or is_srx_cluster is True:
+        # collect all the bits that are cluster specific
+        ss.run('cli -c "show chassis cluster status | append "' + file)
+        ss.run('cli -c "show chassis cluster interfaces | append "' + file)
+        ss.run('cli -c "show chassis cluster statistics | append "' + file)
+        ss.run('cli -c "show chassis cluster information | append "' + file)
+        ss.run('cli -c "show chassis cluster ip-monitoring status | append "' + file)
+
+    ss.close()
+
+    # Copy file to localhost
+    copy_file(dev,file)
+
+    # Cleanup after ourselves
+    delete_file(dev,file)
+
+    print("Done with chassis information")
 
 # Method for human readable size-output
 def sizeof_fmt(num, suffix='B'):
@@ -122,6 +155,7 @@ date = now.strftime("%Y-%m-%d_%H-%M")
 def main():
     """main"""
 
+    # cli arguments
     parser = argparse.ArgumentParser(usage='jtac_collector.py -d <hostname> -u <username>')
     parser.add_argument('-d', '--device', help='Enter a Juniper device (name or IP)')
     parser.add_argument('-u', '--username', help='Enter the username')
@@ -146,15 +180,32 @@ def main():
 
     print("Connected successfully...")
 
+    # define some bits based on facts we collected
+    if dev.facts['vc_mode'] == "Enabled":
+        is_vc_cluster = True
+    else:
+        is_vc_cluster = False
+
+    if dev.facts['srx_cluster'] is True:
+        is_srx_cluster = True
+    else:
+        is_srx_cluster = False
+
+    if dev.facts['model'] in "SRX":
+        is_srx = True
+    else:
+        is_srx = False
+
     # Collect all our bits
     # Make sure we sleep a little after each collection so we don't tire the
     # device out to much and lose our connection
-    collect_rsi(dev)
+    collect_rsi(dev, is_vc_cluster, is_srx_cluster)
     time.sleep(30)
-    collect_logs(dev)
+    collect_logs(dev, is_vc_cluster, is_srx_cluster)
+    time.sleep(30)
+    collect_chassis(dev, is_vc_cluster, is_srx_cluster)
 
     dev.close()
     print("Connection closed...")
-
 
 main()
