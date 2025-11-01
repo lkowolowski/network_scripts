@@ -32,7 +32,7 @@ def main():
         host = args.device
 
     if not args.username:
-        username = input('Device username')
+        username = "automation"
     else:
         username = args.username
 
