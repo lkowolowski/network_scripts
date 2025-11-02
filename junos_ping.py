@@ -13,10 +13,12 @@
 # pip install telnetlib-313-and-up
 # until junos-eznc gets updated
 #
+import time
 import datetime
 import argparse
 import os
 from io import StringIO
+from pprint import pprint
 from lxml import etree
 from jnpr.junos import Device
 from jnpr.junos.exception import (
@@ -62,6 +64,9 @@ def main():
     else:
         username=args.username
 
+    # Get timestamp for our output
+    timestamp = time.time()
+
     # connect to the device with IP-address, login user and passwort
     dev = Device(host=device, user=username,
                  gather_facts=False)
@@ -88,8 +93,8 @@ def main():
     dev.timeout=120
     dev.banner_timeout=60
 
-    print("Connected successfully to {}".format(device))
-    print("Pinging device {} from {}".format(target, routing_instance))
+    print(f"Connected successfully to {device}")
+    print(f"Pinging device {target} from {routing_instance}")
 
     ping_result = dev.rpc.ping(count=count,
                                host=target,
@@ -98,32 +103,39 @@ def main():
 
     ping_result_str=etree.tostring(ping_result, encoding="unicode")
 
+
     f=StringIO(ping_result_str)
     context = etree.parse(f)
     root=context.getroot()
-    for element in root.iter():
-        print(f"{element.tag}={element.text}")
-    # ping-results=None
-    # target-host=1.1.1.1
-    # target-ip=1.1.1.1
-    # packet-size=56
-    # probe-result=None
-    # probe-index=1
-    # probe-success=None
-    # sequence-number=0
-    # ip-address=1.1.1.1
-    # time-to-live=59
-    # response-size=64
-    # rtt=24653
-    # probe-results-summary=None
-    # probes-sent=1
-    # responses-received=1
-    # packet-loss=0
-    # rtt-minimum=24653
-    # rtt-maximum=24653
-    # rtt-average=24653
-    # rtt-stddev=0
-    # ping-success=None
+
+    # Useful for seeing what our xml tree looks like
+    #def prettyprint(element, **kwargs):
+    #    xml = etree.tostring(element, pretty_print=True, **kwargs)
+    #    print(xml.decode(), end='')
+
+    # printing out the xml tree
+    # prettyprint(root)
+
+    # want to have a line for each of:
+    # rtt-minimum, rtt-maximum, rtt-average, rtt-stddev, packet-loss
+    # It should look something like this:
+    # latency,platform=junos,source=device,destination=target,routing_instance=instance rtt-minimum=value <timestamp>
+    # latency,platform=junos,source=device,destination=target,routing_instance=instance rtt-maximum=value <timestamp>
+    # latency,platform=junos,source=device,destination=target,routing_instance=instance rtt-average=value <timestamp>
+    # latency,platform=junos,source=device,destination=target,routing_instance=instance rtt-stddev=value <timestamp>
+    # latency,platform=junos,source=device,destination=target,routing_instance=instance packet-loss=value <timestamp>
+    #
+    rtt_min=root.find(".//rtt-minimum").text
+    rtt_max=root.find(".//rtt-maximum").text
+    rtt_avg=root.find(".//rtt-average").text
+    rtt_stddev=root.find(".//rtt-stddev").text
+    packet_loss=root.find(".//packet-loss").text
+
+    print(f"latency,platform=junos,source={device},destination={target},instance={routing_instance},rtt-minimum={rtt_min} {timestamp:.0f}")
+    print(f"latency,platform=junos,source={device},destination={target},instance={routing_instance},rtt-maximum={rtt_max} {timestamp:.0f}")
+    print(f"latency,platform=junos,source={device},destination={target},instance={routing_instance},rtt-average={rtt_avg} {timestamp:.0f}")
+    print(f"latency,platform=junos,source={device},destination={target},instance={routing_instance},rtt-stddev={rtt_stddev} {timestamp:.0f}")
+    print(f"latency,platform=junos,source={device},destination={target},instance={routing_instance},packet-loss={packet_loss} {timestamp:.0f}")
 
     dev.close()
     print("Connection closed...")
