@@ -16,6 +16,8 @@ import os
 import time
 import datetime
 import argparse
+from lxml import etree
+from pprint import pprint
 from jnpr.junos.utils.start_shell import StartShell
 from jnpr.junos import Device
 from jnpr.junos.utils.scp import SCP
@@ -161,6 +163,74 @@ def collect_security_flow (dev):
 
     print("Done")
 
+def collect_ospf (dev):
+    """collect ospf information"""
+
+    # file to create on remote device
+    file = "/var/tmp/" + date + "_" + dev.hostname + "_ospf.txt"
+
+    print("Collecting OSPF information")
+    ss = StartShell(dev)
+    ss.open()
+    ss.run('cli -c "show ospf overview | save "' + file)
+    ss.run('cli -c "show ospf database extensive | append "' + file)
+    ss.run('cli -c "show ospf detail | append "' + file)
+    ss.run('cli -c "show ospf route | append "' + file)
+    ss.run('cli -c "show ospf statistics | append "' + file)
+    ss.run('cli -c "show ospf interface | append "' + file)
+    ss.run('cli -c "show ospf log | append "' + file)
+    ss.run('cli -c "show route protocol ospf | append "' + file)
+    ss.close()
+
+    # copy file to localhost
+    copy_file(dev, file)
+
+    # cleanup after ourselves
+    delete_file(dev, file)
+
+    print("Done")
+
+def collect_ospf3 (dev):
+    """collect ospf3 information"""
+
+    # file to create on remote device
+    file = "/var/tmp/" + date + "_" + dev.hostname + "_ospf3.txt"
+
+    print("Collecting OSPF3 information")
+    ss = StartShell(dev)
+    ss.open()
+    ss.run('cli -c "show ospf3 overview | save "' + file)
+    ss.run('cli -c "show ospf3 database extensive | append "' + file)
+    ss.run('cli -c "show ospf3 detail | append "' + file)
+    ss.run('cli -c "show ospf3 route | append "' + file)
+    ss.run('cli -c "show ospf3 statistics | append "' + file)
+    ss.run('cli -c "show ospf3 interface | append "' + file)
+    ss.run('cli -c "show ospf3 log | append "' + file)
+    ss.run('cli -c "show route protocol ospf3 | append "' + file)
+    ss.close()
+
+    # copy file to localhost
+    copy_file(dev, file)
+
+    # cleanup after ourselves
+    delete_file(dev, file)
+
+    print("Done")
+
+def check_ospf(dev):
+    """check if the device config has ospf"""
+
+    xml_filter = '<configuration><protocols/></configuration>'
+    data = dev.rpc.get_config(filter_xml=xml_filter, options={'format':'set'})
+    return bool(" ospf " in etree.tostring(data, encoding='unicode'))
+
+def check_ospf3(dev):
+    """check if the device config has ospf3"""
+
+    xml_filter = '<configuration><protocols/></configuration>'
+    data = dev.rpc.get_config(filter_xml=xml_filter, options={'format':'set'})
+    return bool(" ospf3 " in etree.tostring(data, encoding='unicode'))
+
 # Method for human readable size-output
 def sizeof_fmt(num, suffix='B'):
     """make size numbers human readable"""
@@ -232,6 +302,18 @@ def main():
     if is_srx is True:
         time.sleep(30)
         collect_security_flow(dev)
+
+    time.sleep(30)
+    running_ospf=check_ospf(dev)
+    if running_ospf is True:
+        time.sleep(10)
+        collect_ospf(dev)
+
+    time.sleep(30)
+    running_ospf3=check_ospf3(dev)
+    if running_ospf3 is True:
+        time.sleep(10)
+        collect_ospf3(dev)
 
     dev.close()
     print("Connection closed...")
