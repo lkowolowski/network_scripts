@@ -139,6 +139,28 @@ def collect_chassis(dev, is_vc_cluster, is_srx_cluster):
 
     print("Done with chassis information")
 
+def collect_security_flow (dev):
+    """collect security flow information"""
+    # file to create on remote device
+    file = "/var/tmp/" + date + "_" + dev.hostname + "_security_flows.txt"
+
+    print("Collecting security flow information")
+    ss = StartShell(dev)
+    ss.open()
+    ss.run('cli -c "show security flow session summary | save "' + file)
+    ss.run('cli -c "show security flow cp-session summary | append "' + file)
+    ss.run('cli -c "show interface extensive | append "' + file)
+    ss.run('cli -c "show arp no-resolve | append "' + file)
+    ss.close()
+
+    # copy file to localhost
+    copy_file(dev,file)
+
+    # cleanup after ourselves
+    delete_file(dev,file)
+
+    print("Done")
+
 # Method for human readable size-output
 def sizeof_fmt(num, suffix='B'):
     """make size numbers human readable"""
@@ -182,16 +204,19 @@ def main():
 
     # define some bits based on facts we collected
     if dev.facts['vc_mode'] == "Enabled":
+        print("Working with a Vritual-Chassis cluster")
         is_vc_cluster = True
     else:
         is_vc_cluster = False
 
     if dev.facts['srx_cluster'] is True:
+        print("Working with an SRX cluster")
         is_srx_cluster = True
     else:
         is_srx_cluster = False
 
-    if dev.facts['model'] in "SRX":
+    if "SRX" in dev.facts['model']:
+        print("Working with a " + dev.facts['model'])
         is_srx = True
     else:
         is_srx = False
@@ -204,6 +229,9 @@ def main():
     collect_logs(dev, is_vc_cluster, is_srx_cluster)
     time.sleep(30)
     collect_chassis(dev, is_vc_cluster, is_srx_cluster)
+    if is_srx is True:
+        time.sleep(30)
+        collect_security_flow(dev)
 
     dev.close()
     print("Connection closed...")
