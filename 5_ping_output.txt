@@ -1,0 +1,8 @@
+Connected successfully to srx.cmhome
+Pinging device 1.1.1.1 from default
+latency,platform=junos,source=srx.cmhome,destination=1.1.1.1,instance=default,rtt-minimum=19771 1762108405
+latency,platform=junos,source=srx.cmhome,destination=1.1.1.1,instance=default,rtt-maximum=29328 1762108405
+latency,platform=junos,source=srx.cmhome,destination=1.1.1.1,instance=default,rtt-average=23626 1762108405
+latency,platform=junos,source=srx.cmhome,destination=1.1.1.1,instance=default,rtt-stddev=3707 1762108405
+latency,platform=junos,source=srx.cmhome,destination=1.1.1.1,instance=default,packet-loss=0 1762108405
+Connection closed...

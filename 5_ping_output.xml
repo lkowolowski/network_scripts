@@ -1,0 +1,63 @@
+Connected successfully to srx.cmhome
+Pinging device 1.1.1.1 from default
+<ping-results>
+  <target-host>1.1.1.1</target-host>
+  <target-ip>1.1.1.1</target-ip>
+  <packet-size>56</packet-size>
+  <probe-result date-determined="1762105209">
+    <probe-index>1</probe-index>
+    <probe-success/>
+    <sequence-number>0</sequence-number>
+    <ip-address>1.1.1.1</ip-address>
+    <time-to-live>59</time-to-live>
+    <response-size>64</response-size>
+    <rtt>18622</rtt>
+  </probe-result>
+  <probe-result date-determined="1762105210">
+    <probe-index>2</probe-index>
+    <probe-success/>
+    <sequence-number>1</sequence-number>
+    <ip-address>1.1.1.1</ip-address>
+    <time-to-live>59</time-to-live>
+    <response-size>64</response-size>
+    <rtt>19063</rtt>
+  </probe-result>
+  <probe-result date-determined="1762105211">
+    <probe-index>3</probe-index>
+    <probe-success/>
+    <sequence-number>2</sequence-number>
+    <ip-address>1.1.1.1</ip-address>
+    <time-to-live>59</time-to-live>
+    <response-size>64</response-size>
+    <rtt>24157</rtt>
+  </probe-result>
+  <probe-result date-determined="1762105212">
+    <probe-index>4</probe-index>
+    <probe-success/>
+    <sequence-number>3</sequence-number>
+    <ip-address>1.1.1.1</ip-address>
+    <time-to-live>59</time-to-live>
+    <response-size>64</response-size>
+    <rtt>21506</rtt>
+  </probe-result>
+  <probe-result date-determined="1762105213">
+    <probe-index>5</probe-index>
+    <probe-success/>
+    <sequence-number>4</sequence-number>
+    <ip-address>1.1.1.1</ip-address>
+    <time-to-live>59</time-to-live>
+    <response-size>64</response-size>
+    <rtt>23265</rtt>
+  </probe-result>
+  <probe-results-summary>
+    <probes-sent>5</probes-sent>
+    <responses-received>5</responses-received>
+    <packet-loss>0</packet-loss>
+    <rtt-minimum>18622</rtt-minimum>
+    <rtt-maximum>24157</rtt-maximum>
+    <rtt-average>21322</rtt-average>
+    <rtt-stddev>2201</rtt-stddev>
+  </probe-results-summary>
+  <ping-success/>
+</ping-results>
+Connection closed...

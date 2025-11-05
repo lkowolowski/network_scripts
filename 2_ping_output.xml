@@ -1,0 +1,36 @@
+Connected successfully to srx.cmhome
+Pinging device 1.1.1.1 from default
+<ping-results>
+  <target-host>1.1.1.1</target-host>
+  <target-ip>1.1.1.1</target-ip>
+  <packet-size>56</packet-size>
+  <probe-result date-determined="1762105187">
+    <probe-index>1</probe-index>
+    <probe-success/>
+    <sequence-number>0</sequence-number>
+    <ip-address>1.1.1.1</ip-address>
+    <time-to-live>59</time-to-live>
+    <response-size>64</response-size>
+    <rtt>20618</rtt>
+  </probe-result>
+  <probe-result date-determined="1762105188">
+    <probe-index>2</probe-index>
+    <probe-success/>
+    <sequence-number>1</sequence-number>
+    <ip-address>1.1.1.1</ip-address>
+    <time-to-live>59</time-to-live>
+    <response-size>64</response-size>
+    <rtt>21875</rtt>
+  </probe-result>
+  <probe-results-summary>
+    <probes-sent>2</probes-sent>
+    <responses-received>2</responses-received>
+    <packet-loss>0</packet-loss>
+    <rtt-minimum>20618</rtt-minimum>
+    <rtt-maximum>21875</rtt-maximum>
+    <rtt-average>21246</rtt-average>
+    <rtt-stddev>628</rtt-stddev>
+  </probe-results-summary>
+  <ping-success/>
+</ping-results>
+Connection closed...
