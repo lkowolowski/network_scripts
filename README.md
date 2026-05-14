@@ -1,22 +1,22 @@
-Misc Juniper related scripts.
+Misc Juniper-related scripts designed to run via `uv run --script` so dependencies stay isolated and portable.
 
-These all leverage uv for dependency management. Should be portable anywhere you can
-run uv.
+## Script Catalog
 
-## **JTAC collection**
+| Script                 | Summary                                                                                                        | Documentation                                          |
+| ---------------------- | -------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------ |
+| `jtac_collector.py`    | Builds JTAC-ready bundles (RSI, `/var/log`, chassis + optional OSPF/SRX data) and copies them to your desktop. | [docs/jtac_collector.md](docs/jtac_collector.md)       |
+| `junos_ping.py`        | Executes device-sourced pings over NETCONF and emits Telegraf-friendly metrics (line protocol or JSON).        | [docs/junos_ping.md](docs/junos_ping.md)               |
+| `junos_print_facts.py` | Connects via NETCONF and prints `Device.facts` for quick inventory checks.                                     | [docs/junos_print_facts.md](docs/junos_print_facts.md) |
+| `junos_version.py`     | Selenium proof-of-concept for scraping Juniper's suggested releases page (currently a stub).                   | [docs/junos_version.md](docs/junos_version.md)         |
 
-This will collect information for submitting a JTAC case
+Scripts ending in `.new` are experimental and intentionally undocumented until stabilized.
 
-## **Junos ping**
+## Troubleshooting
 
-This will ping a destination from a specified junos device
-
-## **Troubleshooting**
-
-If you have problems with odd timeouts, look for
+If you experience unexpected NETCONF disconnects or timeouts, verify the device is not enforcing aggressive limits:
 
 ```bash
 system services netconf ssh rate-limit
 ```
 
-It may be killing connections before the script has finished.
+Disabling or loosening that knob often prevents sessions from being killed mid-transfer.

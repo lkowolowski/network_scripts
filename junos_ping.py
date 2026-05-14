@@ -13,9 +13,10 @@
 # pip install telnetlib-313-and-up
 # until junos-eznc gets updated
 #
-import datetime
 import argparse
-import os
+import json
+import subprocess
+import sys
 from io import StringIO
 from lxml import etree
 from jnpr.junos import Device
@@ -26,107 +27,238 @@ from jnpr.junos.exception import (
     ConnectError,
 )
 
+
+def _escape_lp(value: str) -> str:
+    escaped = str(value).replace("\\", "\\\\")
+    escaped = escaped.replace(" ", "\\ ")
+    escaped = escaped.replace(",", "\\,")
+    escaped = escaped.replace("=", "\\=")
+    return escaped
+
+
+def _find_int(root, tag: str):
+    text = root.findtext(f".//{tag}")
+    try:
+        return int(text)
+    except (TypeError, ValueError):
+        return None
+
+
+def _microseconds_to_seconds(value):
+    if value is None:
+        return None
+    return value / 1_000_000
+
+
+def _escape_field_string(value: str) -> str:
+    escaped = str(value).replace("\\", "\\\\")
+    return escaped.replace('"', '\\"')
+
+
+def _emit_metrics(device, target, routing_instance, fields, output_format):
+    tags = {
+        "device": device,
+        "target": target,
+        "vrf": routing_instance,
+    }
+    if output_format == "json":
+        payload = {
+            "measurement": "junos_ping",
+            "tags": tags,
+            "fields": {k: v for k, v in fields.items() if v is not None},
+        }
+        print(json.dumps(payload))
+        return
+
+    measurement = _escape_lp("junos_ping")
+    tag_str = ",".join(f"{_escape_lp(k)}={_escape_lp(v)}" for k, v in tags.items())
+
+    field_parts = []
+    for key, value in fields.items():
+        if value is None:
+            continue
+        field_key = _escape_lp(key)
+        if isinstance(value, int):
+            field_parts.append(f"{field_key}={value}i")
+        elif isinstance(value, float):
+            field_parts.append(f"{field_key}={value}")
+        else:
+            field_parts.append(f'{field_key}="{_escape_field_string(value)}"')
+
+    if field_parts:
+        print(f"{measurement},{tag_str} {','.join(field_parts)}")
+
+
 def main():
     """main"""
 
-    parser = argparse.ArgumentParser(usage='junos_ping.py -d <hostname> -r <routing-instance> -t <target>')
-    parser.add_argument('-d', '--device', help='Enter a Juniper device (name or IP) to ping from')
-    parser.add_argument('-c', '--count', help='Enter the number of pnigs to send')
-    parser.add_argument('-i', '--routing_instance', help='Enter the routing-instance')
-    parser.add_argument('-t', '--target', help='Enter the target IP to ping')
-    parser.add_argument('-u', '--username', help='Username to connect as')
+    parser = argparse.ArgumentParser(
+        description="Execute a ping from a Junos device using NETCONF"
+    )
+    parser.add_argument(
+        "-d",
+        "--device",
+        required=True,
+        help="Juniper device (hostname or IP) to source the ping from",
+    )
+    parser.add_argument(
+        "-t", "--target", required=True, help="Target IP address to ping"
+    )
+    parser.add_argument(
+        "-c",
+        "--count",
+        type=int,
+        default=1,
+        help="Number of pings to send (default: 1)",
+    )
+    parser.add_argument(
+        "-i",
+        "--vrf",
+        default="default",
+        help="VRF / routing-instance to use (default: default)",
+    )
+    parser.add_argument(
+        "-u",
+        "--username",
+        default="automation",
+        help="Username to connect as (default: automation)",
+    )
+    parser.add_argument(
+        "-o",
+        "--output-format",
+        choices=("line", "json"),
+        default="line",
+        help="Telegraf output format for stdout (default: line protocol)",
+    )
+    parser.add_argument(
+        "-v",
+        "--verbose",
+        action="store_true",
+        help="Print human-readable connection logs to stderr",
+    )
     args = parser.parse_args()
 
-    if not args.device:
-        device = input('Junos device to ping from')
-    else:
-        device = args.device
+    device = args.device
+    target = args.target
+    if args.count <= 0:
+        raise ValueError("Ping count must be greater than zero")
 
-    if not args.target:
-        target = input('Target to ping')
-    else:
-        target = args.target
-
-    if args.count is None:
-        count="1"
-    else:
-        count=args.count
-
-    if args.routing_instance is None:
-        routing_instance="default"
-    else:
-        routing_instance=args.routing_instance
-
-    if args.username is None:
-        username="automation"
-    else:
-        username=args.username
-
-    # connect to the device with IP-address, login user and passwort
-    dev = Device(host=device, user=username,
-                 gather_facts=False)
+    count = args.count
+    routing_instance = args.vrf
+    username = args.username
+    output_format = args.output_format
+    verbose = args.verbose
 
     # open a connection to the device and start a NETCONF session
-    response = os.system("ping -qc 1 " + device + ">/dev/null")
-    if response == 0:
-        try:
-            dev.open()
-        except ConnectAuthError:
-            print("ERROR: Authentication failed.")
-            return
-        except ConnectRefusedError:
-            print("ERROR: Connection refused.")
-            return
-        except ConnectTimeoutError:
-            print("ERROR: Connection timed oud.")
-            return
-        except ConnectError:
-            print("ERROR: Connection failed.")
-            return
+    try:
+        subprocess.run(
+            ["ping", "-qc", "1", device],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=True,
+        )
+    except subprocess.CalledProcessError:
+        print(
+            f"ERROR: Unable to reach {device} via system ping. Aborting.",
+            file=sys.stderr,
+        )
+        _emit_metrics(
+            device,
+            target,
+            routing_instance,
+            {
+                "packets_sent": 0,
+                "packets_received": 0,
+                "success": 0,
+                "error": "local_ping_failed",
+            },
+            output_format,
+        )
+        return
 
-    # needed for file compression on srx340 because they are slow
-    dev.timeout=120
-    dev.banner_timeout=60
+    try:
+        with Device(host=device, user=username, gather_facts=False) as dev:
+            # needed for file compression on srx340 because they are slow
+            dev.timeout = 120
+            dev.banner_timeout = 60
 
-    print("Connected successfully to {}".format(device))
-    print("Pinging device {} from {}".format(target, routing_instance))
+            if verbose:
+                print("Connected successfully to {}".format(device), file=sys.stderr)
+                print(
+                    "Pinging device {} from {}".format(target, routing_instance),
+                    file=sys.stderr,
+                )
 
-    ping_result = dev.rpc.ping(count=count,
-                               host=target,
-                               instance=routing_instance,
-                               normalize=True)
+            ping_params = {
+                "count": str(count),
+                "host": target,
+                "normalize": True,
+            }
+            if routing_instance != "default":
+                ping_params["instance"] = routing_instance
 
-    ping_result_str=etree.tostring(ping_result, encoding="unicode")
+            ping_result = dev.rpc.ping(**ping_params)
 
-    f=StringIO(ping_result_str)
-    context = etree.parse(f)
-    root=context.getroot()
-    for element in root.iter():
-        print(f"{element.tag}={element.text}")
-    # ping-results=None
-    # target-host=1.1.1.1
-    # target-ip=1.1.1.1
-    # packet-size=56
-    # probe-result=None
-    # probe-index=1
-    # probe-success=None
-    # sequence-number=0
-    # ip-address=1.1.1.1
-    # time-to-live=59
-    # response-size=64
-    # rtt=24653
-    # probe-results-summary=None
-    # probes-sent=1
-    # responses-received=1
-    # packet-loss=0
-    # rtt-minimum=24653
-    # rtt-maximum=24653
-    # rtt-average=24653
-    # rtt-stddev=0
-    # ping-success=None
+            ping_result_str = etree.tostring(ping_result, encoding="unicode")
 
-    dev.close()
-    print("Connection closed...")
+            f = StringIO(ping_result_str)
+            context = etree.parse(f)
+            root = context.getroot()
+            probes_sent_val = _find_int(root, "probes-sent")
+            responses_received_val = _find_int(root, "responses-received")
+            packet_loss = _find_int(root, "packet-loss")
+
+            rtt_min_seconds = _microseconds_to_seconds(_find_int(root, "rtt-minimum"))
+            rtt_max_seconds = _microseconds_to_seconds(_find_int(root, "rtt-maximum"))
+            rtt_avg_seconds = _microseconds_to_seconds(_find_int(root, "rtt-average"))
+            rtt_stddev_seconds = _microseconds_to_seconds(_find_int(root, "rtt-stddev"))
+
+            probes_sent = probes_sent_val if probes_sent_val is not None else 0
+            responses_received = (
+                responses_received_val if responses_received_val is not None else 0
+            )
+            success = 1 if responses_received > 0 else 0
+
+            fields = {
+                "packets_sent": probes_sent,
+                "packets_received": responses_received,
+                "success": success,
+                "packet_loss": packet_loss,
+                "rtt_min_seconds": rtt_min_seconds,
+                "rtt_max_seconds": rtt_max_seconds,
+                "rtt_avg_seconds": rtt_avg_seconds,
+                "rtt_stddev_seconds": rtt_stddev_seconds,
+            }
+            if success == 0:
+                fields["error"] = "no_responses"
+
+            _emit_metrics(device, target, routing_instance, fields, output_format)
+    except (
+        ConnectAuthError,
+        ConnectRefusedError,
+        ConnectTimeoutError,
+        ConnectError,
+    ) as err:
+        print(
+            f"ERROR: Connection failed ({err.__class__.__name__}): {err}",
+            file=sys.stderr,
+        )
+        _emit_metrics(
+            device,
+            target,
+            routing_instance,
+            {
+                "packets_sent": 0,
+                "packets_received": 0,
+                "success": 0,
+                "error": err.__class__.__name__,
+            },
+            output_format,
+        )
+        return
+
+    if verbose:
+        print("Connection closed...", file=sys.stderr)
 
 
 if __name__ == "__main__":
