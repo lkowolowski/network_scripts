@@ -12,94 +12,83 @@
 # pip install telnetlib-313-and-up
 # until junos-eznc gets updated
 #
+import argparse
+import datetime
 import os
 import time
-import datetime
-import argparse
-from lxml import etree
-from pprint import pprint
-from jnpr.junos.utils.start_shell import StartShell
-from jnpr.junos import Device
-from jnpr.junos.utils.scp import SCP
-from jnpr.junos.utils.fs import FS
 
-def delete_file(dev,file):
+from jnpr.junos import Device
+from jnpr.junos.exception import ConnectError
+from jnpr.junos.utils.fs import FS
+from jnpr.junos.utils.scp import SCP
+from jnpr.junos.utils.start_shell import StartShell
+from lxml import etree
+
+
+def delete_file(dev, file):
     """delete a file"""
-    ss = StartShell(dev)
-    ss.open()
-    # Get file system information
     file_system = FS(dev)
     file_stat = file_system.stat(file)
-    print("Deleting file: "+file+" - Size: "+(str(sizeof_fmt(file_stat['size']))))
-    ss.run('cli -c "file delete "'+file)
-    ss.close()
+    if file_stat is None or file_stat["size"] is None:
+        print(f"File {file} does not exist, skipping delete")
+        return
+    print(f"Deleting file: {file} - Size: {sizeof_fmt(file_stat['size'])}")
+    with StartShell(dev) as ss:
+        ss.run(f'cli -c "file delete {file}"')
 
-def copy_file(dev,file):
-    """Transfering files via SCP"""
+
+def copy_file(dev, file):
+    """transfer a file from the device via SCP"""
 
     # Create directory on the desktop named after the host we're connecting to
-    path=os.path.expanduser("~/Desktop/"+dev.hostname)
+    path = os.path.expanduser(f"~/Desktop/{dev.hostname}")
     if not os.path.exists(path):
         os.mkdir(path)
-        print("Created destination directory: "+path)
+        print(f"Created destination directory: {path}")
     else:
         print("Destination directory already exists")
 
-    # Get file system information
     file_system = FS(dev)
     file_stat = file_system.stat(file)
-    # Get file
-    if file_stat['size'] is not None:
-        print("Copying file: "+file+" - Size: "+(str(sizeof_fmt(file_stat['size']))))
-        with SCP(dev, progress=True) as scp:
-            scp.get(file, path)
-    else:
-        print("Error: file "+file+" does not exist")
+    if file_stat is None or file_stat["size"] is None:
+        print(f"Error: file {file} does not exist")
+        return
+    print(f"Copying file: {file} - Size: {sizeof_fmt(file_stat['size'])}")
+    with SCP(dev, progress=True) as scp:
+        scp.get(file, path)
 
-def collect_coredumps(dev):
-    """collect coredumps"""
-    core_dumps = dev.rpc.get_system_core_dumps()
-    file_count = core_dumps.findtext('directory/total-files')
-    if file_count is not None:
-        with SCP(dev, progress=True) as scp:
-            scp.get("/var/crash/*")
-    else:
-        print("No core dumps to collect")
 
 # list of functions we'll call to generate and then collect the data
-def collect_rsi(dev, is_vc_cluster, is_srx_cluster):
+def collect_rsi(dev, date, is_cluster):
     """collect 'request support information'"""
     # File to create on remote device
-    file = "/var/tmp/"+date+"_"+dev.hostname+"_rsi.txt"
+    file = f"/var/tmp/{date}_{dev.hostname}_rsi.txt"
 
     print("Creating RSI...")
 
-    # If we have an error here, the file won't be created. This will cascade to copy
-    # and will give an error about being unable to iterate None type
-    ss = StartShell(dev)
-    ss.open()
-    # find a way to collect this from all members in a cluster
-    if is_vc_cluster is True:
-        ss.run('cli -c "request support information all-members | save "'+file)
-    elif is_srx_cluster is True:
-        ss.run('cli -c "request support information all-members | save "'+file)
-    else:
-        ss.run('cli -c "request support information | save "'+file)
-    ss.close()
+    # If the RSI command fails, the file won't be created; copy_file handles the
+    # missing file gracefully and skips the transfer.
+    # RSI can take minutes on busy boxes; give the shell run a generous timeout.
+    with StartShell(dev) as ss:
+        # find a way to collect this from all members in a cluster
+        if is_cluster:
+            ss.run(f'cli -c "request support information all-members | save {file}"', timeout=600)
+        else:
+            ss.run(f'cli -c "request support information | save {file}"', timeout=600)
 
     # Copy file to localhost
-    copy_file(dev,file)
+    copy_file(dev, file)
 
     # cleanup after ourselves
-    delete_file(dev,file)
+    delete_file(dev, file)
 
     print("Done")
 
-def collect_logs(dev, is_vc_cluster, is_srx_cluster):
+
+def collect_logs(dev, date):
     """collect logs"""
     # File to create on remote device
-    file = "/var/tmp/" + date + "_" + dev.hostname + "_varlog.tgz"
-
+    file = f"/var/tmp/{date}_{dev.hostname}_varlog.tgz"
 
     # Compress /var/log/ to /var/tmp/pyez_varlog.tgz
     print("Compressing /var/log/*")
@@ -107,80 +96,76 @@ def collect_logs(dev, is_vc_cluster, is_srx_cluster):
     file_system.tgz("/var/log/*", file)
 
     # Copy file to localhost
-    copy_file(dev,file)
+    copy_file(dev, file)
 
     # cleanup after ourselves
-    delete_file(dev,file)
+    delete_file(dev, file)
 
     print("Done")
 
-def collect_chassis(dev, is_vc_cluster, is_srx_cluster):
+
+def collect_chassis(dev, date, is_cluster):
     """collect chassis information"""
     # file to create on remote device
-    file = "/var/tmp/" + date + "_" + dev.hostname + "_chassis.txt"
+    file = f"/var/tmp/{date}_{dev.hostname}_chassis.txt"
 
-    print("Collecting Chassis Informatin")
-    ss = StartShell(dev)
-    ss.open()
-    ss.run('cli -c "show chassis fpc pic-status | save "' + file)
-    if is_vc_cluster is True or is_srx_cluster is True:
-        # collect all the bits that are cluster specific
-        ss.run('cli -c "show chassis cluster status | append "' + file)
-        ss.run('cli -c "show chassis cluster interfaces | append "' + file)
-        ss.run('cli -c "show chassis cluster statistics | append "' + file)
-        ss.run('cli -c "show chassis cluster information | append "' + file)
-        ss.run('cli -c "show chassis cluster ip-monitoring status | append "' + file)
-
-    ss.close()
+    print("Collecting Chassis Information")
+    with StartShell(dev) as ss:
+        ss.run(f'cli -c "show chassis fpc pic-status | save {file}"')
+        if is_cluster:
+            # collect all the bits that are cluster specific
+            ss.run(f'cli -c "show chassis cluster status | append {file}"')
+            ss.run(f'cli -c "show chassis cluster interfaces | append {file}"')
+            ss.run(f'cli -c "show chassis cluster statistics | append {file}"')
+            ss.run(f'cli -c "show chassis cluster information | append {file}"')
+            ss.run(f'cli -c "show chassis cluster ip-monitoring status | append {file}"')
 
     # Copy file to localhost
-    copy_file(dev,file)
+    copy_file(dev, file)
 
     # Cleanup after ourselves
-    delete_file(dev,file)
+    delete_file(dev, file)
 
     print("Done with chassis information")
 
-def collect_security_flow (dev):
+
+def collect_security_flow(dev, date):
     """collect security flow information"""
     # file to create on remote device
-    file = "/var/tmp/" + date + "_" + dev.hostname + "_security_flows.txt"
+    file = f"/var/tmp/{date}_{dev.hostname}_security_flows.txt"
 
     print("Collecting security flow information")
-    ss = StartShell(dev)
-    ss.open()
-    ss.run('cli -c "show security flow session summary | save "' + file)
-    ss.run('cli -c "show security flow cp-session summary | append "' + file)
-    ss.run('cli -c "show interface extensive | append "' + file)
-    ss.run('cli -c "show arp no-resolve | append "' + file)
-    ss.close()
+    with StartShell(dev) as ss:
+        ss.run(f'cli -c "show security flow session summary | save {file}"')
+        ss.run(f'cli -c "show security flow cp-session summary | append {file}"')
+        ss.run(f'cli -c "show interface extensive | append {file}"')
+        ss.run(f'cli -c "show arp no-resolve | append {file}"')
 
     # copy file to localhost
-    copy_file(dev,file)
+    copy_file(dev, file)
 
     # cleanup after ourselves
-    delete_file(dev,file)
+    delete_file(dev, file)
 
     print("Done")
 
-def collect_ospf (dev):
+
+def collect_ospf(dev, date):
     """collect ospf information"""
 
     # file to create on remote device
-    file = "/var/tmp/" + date + "_" + dev.hostname + "_ospf.txt"
+    file = f"/var/tmp/{date}_{dev.hostname}_ospf.txt"
 
     print("Collecting OSPF information")
-    ss = StartShell(dev)
-    ss.open()
-    ss.run('cli -c "show ospf overview | save "' + file)
-    ss.run('cli -c "show ospf database extensive | append "' + file)
-    ss.run('cli -c "show ospf detail | append "' + file)
-    ss.run('cli -c "show ospf route | append "' + file)
-    ss.run('cli -c "show ospf statistics | append "' + file)
-    ss.run('cli -c "show ospf interface | append "' + file)
-    ss.run('cli -c "show ospf log | append "' + file)
-    ss.run('cli -c "show route protocol ospf | append "' + file)
-    ss.close()
+    with StartShell(dev) as ss:
+        ss.run(f'cli -c "show ospf overview | save {file}"')
+        ss.run(f'cli -c "show ospf database extensive | append {file}"')
+        ss.run(f'cli -c "show ospf detail | append {file}"')
+        ss.run(f'cli -c "show ospf route | append {file}"')
+        ss.run(f'cli -c "show ospf statistics | append {file}"')
+        ss.run(f'cli -c "show ospf interface | append {file}"')
+        ss.run(f'cli -c "show ospf log | append {file}"')
+        ss.run(f'cli -c "show route protocol ospf | append {file}"')
 
     # copy file to localhost
     copy_file(dev, file)
@@ -190,24 +175,23 @@ def collect_ospf (dev):
 
     print("Done")
 
-def collect_ospf3 (dev):
+
+def collect_ospf3(dev, date):
     """collect ospf3 information"""
 
     # file to create on remote device
-    file = "/var/tmp/" + date + "_" + dev.hostname + "_ospf3.txt"
+    file = f"/var/tmp/{date}_{dev.hostname}_ospf3.txt"
 
     print("Collecting OSPF3 information")
-    ss = StartShell(dev)
-    ss.open()
-    ss.run('cli -c "show ospf3 overview | save "' + file)
-    ss.run('cli -c "show ospf3 database extensive | append "' + file)
-    ss.run('cli -c "show ospf3 detail | append "' + file)
-    ss.run('cli -c "show ospf3 route | append "' + file)
-    ss.run('cli -c "show ospf3 statistics | append "' + file)
-    ss.run('cli -c "show ospf3 interface | append "' + file)
-    ss.run('cli -c "show ospf3 log | append "' + file)
-    ss.run('cli -c "show route protocol ospf3 | append "' + file)
-    ss.close()
+    with StartShell(dev) as ss:
+        ss.run(f'cli -c "show ospf3 overview | save {file}"')
+        ss.run(f'cli -c "show ospf3 database extensive | append {file}"')
+        ss.run(f'cli -c "show ospf3 detail | append {file}"')
+        ss.run(f'cli -c "show ospf3 route | append {file}"')
+        ss.run(f'cli -c "show ospf3 statistics | append {file}"')
+        ss.run(f'cli -c "show ospf3 interface | append {file}"')
+        ss.run(f'cli -c "show ospf3 log | append {file}"')
+        ss.run(f'cli -c "show route protocol ospf3 | append {file}"')
 
     # copy file to localhost
     copy_file(dev, file)
@@ -216,45 +200,46 @@ def collect_ospf3 (dev):
     delete_file(dev, file)
 
     print("Done")
+
 
 def check_ospf(dev):
     """check if the device config has ospf"""
 
-    xml_filter = '<configuration><protocols/></configuration>'
-    data = dev.rpc.get_config(filter_xml=xml_filter, options={'format':'set'})
-    return bool(" ospf " in etree.tostring(data, encoding='unicode'))
+    xml_filter = "<configuration><protocols/></configuration>"
+    data = dev.rpc.get_config(filter_xml=xml_filter, options={"format": "set"})
+    return bool(" ospf " in etree.tostring(data, encoding="unicode"))
+
 
 def check_ospf3(dev):
     """check if the device config has ospf3"""
 
-    xml_filter = '<configuration><protocols/></configuration>'
-    data = dev.rpc.get_config(filter_xml=xml_filter, options={'format':'set'})
-    return bool(" ospf3 " in etree.tostring(data, encoding='unicode'))
+    xml_filter = "<configuration><protocols/></configuration>"
+    data = dev.rpc.get_config(filter_xml=xml_filter, options={"format": "set"})
+    return bool(" ospf3 " in etree.tostring(data, encoding="unicode"))
+
 
 # Method for human readable size-output
-def sizeof_fmt(num, suffix='B'):
+def sizeof_fmt(num, suffix="B"):
     """make size numbers human readable"""
-    for unit in ['','Ki','Mi','Gi','Ti','Pi','Ei','Zi']:
+    for unit in ["", "Ki", "Mi", "Gi", "Ti", "Pi", "Ei", "Zi"]:
         if abs(num) < 1024.0:
-            return "%3.1f%s%s" % (num, unit, suffix)
+            return f"{num:3.1f}{unit}{suffix}"
         num /= 1024.0
-    return "%.1f%s%s" % (num, 'Yi', suffix)
+    return f"{num:.1f}Yi{suffix}"
 
-# Get actuall date/time
-now = datetime.datetime.now()
-date = now.strftime("%Y-%m-%d_%H-%M")
 
 def main():
     """main"""
 
     # cli arguments
-    parser = argparse.ArgumentParser(usage='jtac_collector.py -d <hostname> -u <username>')
-    parser.add_argument('-d', '--device', help='Enter a Juniper device (name or IP)')
-    parser.add_argument('-u', '--username', help='Enter the username')
+    parser = argparse.ArgumentParser(usage="jtac_collector.py -d <hostname> -u <username>")
+    parser.add_argument("-d", "--device", help="Enter a Juniper device (name or IP)")
+    parser.add_argument("-u", "--username", help="Enter the username")
+    parser.add_argument("-k", "--ssh-key", help="Path to SSH private key for authentication")
     args = parser.parse_args()
 
     if not args.device:
-        host = input('Device hostname')
+        host = input("Device hostname")
     else:
         host = args.device
 
@@ -263,59 +248,66 @@ def main():
     else:
         username = args.username
 
+    date = datetime.datetime.now(tz=datetime.UTC).astimezone().strftime("%Y-%m-%d_%H-%M")
+
     # connect to the device with IP-address, login user and passwort
-    dev = Device(host=host, user=username)
-    dev.open()
+    connect_kwargs = {"host": host, "user": username}
+    if args.ssh_key:
+        connect_kwargs["ssh_private_key_file"] = args.ssh_key
+    dev = Device(**connect_kwargs)
+    try:
+        dev.open()
+    except ConnectError as err:
+        print(f"ERROR: failed to connect to {host}: {err}")
+        return
     # needed for file compression on srx340 because they are slow
-    dev.timeout=120
-    dev.banner_timeout=60
+    dev.timeout = 120
+    dev.banner_timeout = 60  # pyright: ignore[reportAttributeAccessIssue]
 
-    print("Connected successfully...")
+    try:
+        print("Connected successfully...")
 
-    # define some bits based on facts we collected
-    if dev.facts['vc_mode'] == "Enabled":
-        print("Working with a Vritual-Chassis cluster")
-        is_vc_cluster = True
-    else:
-        is_vc_cluster = False
+        # define some bits based on facts we collected
+        if dev.facts["vc_mode"] == "Enabled":
+            print("Working with a Virtual-Chassis cluster")
+        if dev.facts["srx_cluster"]:
+            print("Working with an SRX cluster")
+        is_cluster = dev.facts["vc_mode"] == "Enabled" or dev.facts["srx_cluster"]
 
-    if dev.facts['srx_cluster'] is True:
-        print("Working with an SRX cluster")
-        is_srx_cluster = True
-    else:
-        is_srx_cluster = False
+        if "SRX" in dev.facts["model"]:
+            print(f"Working with a {dev.facts['model']}")
+            is_srx = True
+        else:
+            is_srx = False
 
-    if "SRX" in dev.facts['model']:
-        print("Working with a " + dev.facts['model'])
-        is_srx = True
-    else:
-        is_srx = False
-
-    # Collect all our bits
-    # Make sure we sleep a little after each collection so we don't tire the
-    # device out to much and lose our connection
-    collect_rsi(dev, is_vc_cluster, is_srx_cluster)
-    time.sleep(30)
-    collect_logs(dev, is_vc_cluster, is_srx_cluster)
-    time.sleep(30)
-    collect_chassis(dev, is_vc_cluster, is_srx_cluster)
-    if is_srx is True:
+        # Collect all our bits
+        # Make sure we sleep a little after each collection so we don't tire the
+        # device out to much and lose our connection
+        collect_rsi(dev, date, is_cluster)
         time.sleep(30)
-        collect_security_flow(dev)
+        collect_logs(dev, date)
+        time.sleep(30)
+        collect_chassis(dev, date, is_cluster)
+        if is_srx:
+            time.sleep(30)
+            collect_security_flow(dev, date)
 
-    time.sleep(30)
-    running_ospf=check_ospf(dev)
-    if running_ospf is True:
-        time.sleep(10)
-        collect_ospf(dev)
+        time.sleep(30)
+        running_ospf = check_ospf(dev)
+        if running_ospf:
+            time.sleep(10)
+            collect_ospf(dev, date)
 
-    time.sleep(30)
-    running_ospf3=check_ospf3(dev)
-    if running_ospf3 is True:
-        time.sleep(10)
-        collect_ospf3(dev)
+        time.sleep(30)
+        running_ospf3 = check_ospf3(dev)
+        if running_ospf3:
+            time.sleep(10)
+            collect_ospf3(dev, date)
+    finally:
+        if dev.connected:
+            dev.close()
+            print("Connection closed...")
 
-    dev.close()
-    print("Connection closed...")
 
-main()
+if __name__ == "__main__":
+    main()
