@@ -16,6 +16,7 @@ import argparse
 import datetime
 import os
 import time
+from contextlib import contextmanager
 
 from jnpr.junos import Device
 from jnpr.junos.exception import ConnectError, RpcError
@@ -23,6 +24,17 @@ from jnpr.junos.utils.fs import FS
 from jnpr.junos.utils.scp import SCP
 from jnpr.junos.utils.start_shell import StartShell
 from lxml import etree
+
+
+@contextmanager
+def start_shell(dev):
+    """StartShell wrapper that degrades gracefully if the device drops the session"""
+
+    try:
+        with StartShell(dev) as ss:
+            yield ss
+    except (EOFError, OSError) as err:
+        print(f"WARNING: device dropped the shell session: {err}")
 
 
 def delete_file(dev, file):
@@ -33,7 +45,7 @@ def delete_file(dev, file):
         print(f"File {file} does not exist, skipping delete")
         return
     print(f"Deleting file: {file} - Size: {sizeof_fmt(file_stat['size'])}")
-    with StartShell(dev) as ss:
+    with start_shell(dev) as ss:
         ss.run(f'cli -c "file delete {file}"')
 
 
@@ -69,7 +81,7 @@ def collect_rsi(dev, date, is_cluster):
     # If the RSI command fails, the file won't be created; copy_file handles the
     # missing file gracefully and skips the transfer.
     # RSI can take minutes on busy boxes; give the shell run a generous timeout.
-    with StartShell(dev) as ss:
+    with start_shell(dev) as ss:
         # find a way to collect this from all members in a cluster
         if is_cluster:
             ss.run(f'cli -c "request support information all-members | save {file}"', timeout=600)
@@ -110,7 +122,7 @@ def collect_chassis(dev, date, is_cluster):
     file = f"/var/tmp/{date}_{dev.hostname}_chassis.txt"
 
     print("Collecting Chassis Information")
-    with StartShell(dev) as ss:
+    with start_shell(dev) as ss:
         ss.run(f'cli -c "show chassis fpc pic-status | save {file}"')
         if is_cluster:
             # collect all the bits that are cluster specific
@@ -135,7 +147,7 @@ def collect_security_flow(dev, date):
     file = f"/var/tmp/{date}_{dev.hostname}_security_flows.txt"
 
     print("Collecting security flow information")
-    with StartShell(dev) as ss:
+    with start_shell(dev) as ss:
         ss.run(f'cli -c "show security flow session summary | save {file}"')
         ss.run(f'cli -c "show security flow cp-session summary | append {file}"')
         ss.run(f'cli -c "show interface extensive | append {file}"')
@@ -170,7 +182,7 @@ def collect_ipsec_routed(dev, date, is_cluster):
 
     print("Collecting IPSec routed tunnel information")
     ike_indices = get_ike_sa_indices(dev)
-    with StartShell(dev) as ss:
+    with start_shell(dev) as ss:
         if is_cluster:
             ss.run(
                 f'cli -c "show security ike security-association all-members | save {file}"',
@@ -216,7 +228,7 @@ def collect_ipsec_policy(dev, date, is_cluster):
 
     print("Collecting IPSec policy tunnel information")
     ike_indices = get_ike_sa_indices(dev)
-    with StartShell(dev) as ss:
+    with start_shell(dev) as ss:
         ss.run(f'cli -c "show system licenses | save {file}"')
         if is_cluster:
             ss.run(
@@ -263,7 +275,7 @@ def collect_ipsec_dyn(dev, date, is_cluster):
 
     print("Collecting IPSec dynamic VPN information")
     ike_indices = get_ike_sa_indices(dev)
-    with StartShell(dev) as ss:
+    with start_shell(dev) as ss:
         if is_cluster:
             ss.run(
                 f'cli -c "show security ike security-association all-members | save {file}"',
@@ -298,7 +310,7 @@ def collect_high_cpu(dev, date, is_srx):
     file = f"/var/tmp/{date}_{dev.hostname}_high_cpu.txt"
 
     print("Collecting high cpu information")
-    with StartShell(dev) as ss:
+    with start_shell(dev) as ss:
         ss.run(f'cli -c "show chassis routing-engine | save {file}"')
         ss.run(f'cli -c "show system processes extensive | append {file}"')
         ss.run(f'cli -c "show system users | append {file}"')
@@ -325,7 +337,7 @@ def collect_ospf(dev, date):
     file = f"/var/tmp/{date}_{dev.hostname}_ospf.txt"
 
     print("Collecting OSPF information")
-    with StartShell(dev) as ss:
+    with start_shell(dev) as ss:
         ss.run(f'cli -c "show ospf overview | save {file}"')
         ss.run(f'cli -c "show ospf database extensive | append {file}"')
         ss.run(f'cli -c "show ospf detail | append {file}"')
@@ -351,7 +363,7 @@ def collect_ospf3(dev, date):
     file = f"/var/tmp/{date}_{dev.hostname}_ospf3.txt"
 
     print("Collecting OSPF3 information")
-    with StartShell(dev) as ss:
+    with start_shell(dev) as ss:
         ss.run(f'cli -c "show ospf3 overview | save {file}"')
         ss.run(f'cli -c "show ospf3 database extensive | append {file}"')
         ss.run(f'cli -c "show ospf3 detail | append {file}"')
@@ -376,7 +388,7 @@ def collect_bgp(dev, date):
     file = f"/var/tmp/{date}_{dev.hostname}_bgp.txt"
 
     print("Collecting BGP information")
-    with StartShell(dev) as ss:
+    with start_shell(dev) as ss:
         ss.run(f'cli -c "show bgp summary | save {file}"')
         ss.run(f'cli -c "show bgp neighbor | append {file}"')
         ss.run(f'cli -c "show route forwarding-table | append {file}"')
@@ -386,6 +398,164 @@ def collect_bgp(dev, date):
     copy_file(dev, file)
 
     # Cleanup after ourselves
+    delete_file(dev, file)
+
+    print("Done")
+
+
+def collect_multicast(dev, date):
+    """collect multicast routing information"""
+
+    # file to create on remote device
+    file = f"/var/tmp/{date}_{dev.hostname}_multicast.txt"
+
+    print("Collecting multicast information")
+    with start_shell(dev) as ss:
+        ss.run(f'cli -c "show multicast router | save {file}"')
+        ss.run(f'cli -c "show multicast statistics | append {file}"')
+        ss.run(f'cli -c "show multicast sessions | append {file}"')
+        ss.run(f'cli -c "show multicast usage | append {file}"')
+        ss.run(f'cli -c "show multicast interface | append {file}"')
+        ss.run(f'cli -c "show multicast next-hops | append {file}"')
+        ss.run(f'cli -c "show multicast rpf summary | append {file}"')
+        ss.run(f'cli -c "show interface extensive | append {file}"', timeout=120)
+        ss.run(f'cli -c "show igmp group detail | append {file}"')
+        ss.run(f'cli -c "show igmp statistics | append {file}"')
+        ss.run(f'cli -c "show igmp interface detail | append {file}"')
+        ss.run(f'cli -c "show pim statistics | append {file}"')
+        ss.run(f'cli -c "show pim neighbors | append {file}"')
+        ss.run(f'cli -c "show pim rps detail | append {file}"')
+        ss.run(f'cli -c "show pim join extensive | append {file}"', timeout=120)
+        ss.run(f'cli -c "show pim bootstrap | append {file}"')
+        ss.run(f'cli -c "show msdp source-active | append {file}"')
+        ss.run(f'cli -c "show msdp detail | append {file}"')
+        ss.run(f'cli -c "show msdp statistics | append {file}"')
+        ss.run(f'cli -c "show route | append {file}"', timeout=120)
+
+    # copy file to localhost
+    copy_file(dev, file)
+
+    # cleanup after ourselves
+    delete_file(dev, file)
+
+    print("Done")
+
+
+def collect_alg(dev, date):
+    """collect alg information"""
+
+    # file to create on remote device
+    file = f"/var/tmp/{date}_{dev.hostname}_alg.txt"
+
+    print("Collecting ALG information")
+    with start_shell(dev) as ss:
+        ss.run(f'cli -c "show security alg status | save {file}"')
+        ss.run(f'cli -c "show security resource-manager summary | append {file}"')
+        ss.run(f'cli -c "show security resource-manager resource active | append {file}"')
+        ss.run(f'cli -c "show security resource-manager group active | append {file}"')
+        ss.run(f'cli -c "show security flow gate | append {file}"', timeout=120)
+
+    # copy file to localhost
+    copy_file(dev, file)
+
+    # cleanup after ourselves
+    delete_file(dev, file)
+
+    print("Done")
+
+
+def collect_utm_av(dev, date):
+    """collect utm anti-virus information"""
+
+    # file to create on remote device
+    file = f"/var/tmp/{date}_{dev.hostname}_utm_av.txt"
+
+    print("Collecting UTM anti-virus information")
+    with start_shell(dev) as ss:
+        ss.run(f'cli -c "show system licenses | save {file}"')
+        ss.run(f'cli -c "show security utm status | append {file}"')
+        ss.run(f'cli -c "show security utm session | append {file}"')
+        ss.run(f'cli -c "show security utm anti-virus status detail | append {file}"')
+        ss.run(f'cli -c "show security utm anti-virus statistics | append {file}"')
+        ss.run(f'cli -c "show chassis routing-engine | append {file}"')
+        ss.run(f'cli -c "show system processes extensive | append {file}"', timeout=120)
+
+    # copy file to localhost
+    copy_file(dev, file)
+
+    # cleanup after ourselves
+    delete_file(dev, file)
+
+    print("Done")
+
+
+def collect_utm_as(dev, date):
+    """collect utm anti-spam information"""
+
+    # file to create on remote device
+    file = f"/var/tmp/{date}_{dev.hostname}_utm_as.txt"
+
+    print("Collecting UTM anti-spam information")
+    with start_shell(dev) as ss:
+        ss.run(f'cli -c "show system licenses | save {file}"')
+        ss.run(f'cli -c "show security utm status | append {file}"')
+        ss.run(f'cli -c "show security utm session | append {file}"')
+        ss.run(f'cli -c "show security utm anti-spam status | append {file}"')
+        ss.run(f'cli -c "show security utm anti-spam statistics | append {file}"')
+        ss.run(f'cli -c "show chassis routing-engine | append {file}"')
+        ss.run(f'cli -c "show system processes extensive | append {file}"', timeout=120)
+
+    # copy file to localhost
+    copy_file(dev, file)
+
+    # cleanup after ourselves
+    delete_file(dev, file)
+
+    print("Done")
+
+
+def collect_utm_web(dev, date):
+    """collect utm web-filtering information"""
+
+    # file to create on remote device
+    file = f"/var/tmp/{date}_{dev.hostname}_utm_web.txt"
+
+    print("Collecting UTM web-filtering information")
+    with start_shell(dev) as ss:
+        ss.run(f'cli -c "show system licenses | save {file}"')
+        ss.run(f'cli -c "show security utm status | append {file}"')
+        ss.run(f'cli -c "show security utm session | append {file}"')
+        ss.run(f'cli -c "show security utm web-filtering status | append {file}"')
+        ss.run(f'cli -c "show security utm web-filtering statistics | append {file}"')
+        ss.run(f'cli -c "show chassis routing-engine | append {file}"')
+        ss.run(f'cli -c "show system processes extensive | append {file}"', timeout=120)
+
+    # copy file to localhost
+    copy_file(dev, file)
+
+    # cleanup after ourselves
+    delete_file(dev, file)
+
+    print("Done")
+
+
+def collect_utm_content(dev, date):
+    """collect utm content-filtering information"""
+
+    # file to create on remote device
+    file = f"/var/tmp/{date}_{dev.hostname}_utm_content.txt"
+
+    print("Collecting UTM content-filtering information")
+    with start_shell(dev) as ss:
+        ss.run(f'cli -c "show system licenses | save {file}"')
+        ss.run(f'cli -c "show security utm status | append {file}"')
+        ss.run(f'cli -c "show security utm session | append {file}"')
+        ss.run(f'cli -c "show security utm content-filtering statistics | append {file}"')
+
+    # copy file to localhost
+    copy_file(dev, file)
+
+    # cleanup after ourselves
     delete_file(dev, file)
 
     print("Done")
@@ -405,6 +575,15 @@ def check_ospf3(dev):
     xml_filter = "<configuration><protocols/></configuration>"
     data = dev.rpc.get_config(filter_xml=xml_filter, options={"format": "set"})
     return bool(" ospf3 " in etree.tostring(data, encoding="unicode"))
+
+
+def check_multicast(dev):
+    """check if the device config has multicast protocols (pim, igmp, msdp)"""
+
+    xml_filter = "<configuration><protocols/></configuration>"
+    data = dev.rpc.get_config(filter_xml=xml_filter, options={"format": "set"})
+    config = etree.tostring(data, encoding="unicode")
+    return any(proto in config for proto in (" pim ", " igmp ", " msdp "))
 
 
 # Method for human readable size-output
@@ -510,10 +689,32 @@ def main():
             if running_ospf3:
                 time.sleep(10)
                 collect_ospf3(dev, date)
+
+            time.sleep(30)
+            running_multicast = check_multicast(dev)
+            if running_multicast:
+                time.sleep(10)
+                collect_multicast(dev, date)
+
+            if is_srx:
+                time.sleep(30)
+                collect_alg(dev, date)
+                time.sleep(30)
+                collect_utm_av(dev, date)
+                time.sleep(30)
+                collect_utm_as(dev, date)
+                time.sleep(30)
+                collect_utm_web(dev, date)
+                time.sleep(30)
+                collect_utm_content(dev, date)
     finally:
         if dev.connected:
-            dev.close()
-            print("Connection closed...")
+            try:
+                dev.close()
+            except (EOFError, OSError) as err:
+                print(f"WARNING: connection close failed: {err}")
+            else:
+                print("Connection closed...")
 
 
 if __name__ == "__main__":
