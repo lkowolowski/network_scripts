@@ -1,0 +1,25 @@
+# .markdownlint.yml — markdownlint configuration
+# https://github.com/DavidAnson/markdownlint/blob/main/doc/Rules.md
+
+default: true
+
+# MD013 — line length: disable, long lines are fine in tables and code blocks
+MD013: false
+
+# MD033 — inline HTML: allow (used for badges)
+MD033: false
+
+# MD041 — first line should be a top-level heading: enforce
+MD041: true
+
+# MD024 — no duplicate headings: allow same headings in different sections
+MD024:
+  siblings_only: true
+
+# MD029 — ordered list item prefix: use "ordered" style (1. 2. 3.)
+MD029:
+  style: ordered
+
+# MD007 — unordered list indentation
+MD007:
+  indent: 2

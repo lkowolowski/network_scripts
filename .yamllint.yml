@@ -1,0 +1,27 @@
+# .yamllint.yml — yamllint configuration
+# https://yamllint.readthedocs.io/en/stable/configuration.html
+
+extends: default
+
+rules:
+  # Line length: ChromaTerm regex rules can be long
+  line-length:
+    max: 300
+    level: warning
+
+  # Comments: require a space after #, but don't enforce inline comment spacing
+  comments:
+    min-spaces-from-content: 2
+
+  # Braces: allow flow mappings on one line
+  braces:
+    min-spaces-inside: 0
+    max-spaces-inside: 1
+
+  # Truthy: ChromaTerm uses bare true/false in YAML — allow them
+  truthy:
+    allowed-values: ["true", "false"]
+    check-keys: false
+
+  # Document start: don't require --- at the top of every file
+  document-start: disable

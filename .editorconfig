@@ -1,0 +1,24 @@
+root = true
+
+[*]
+charset                  = utf-8
+end_of_line              = lf
+insert_final_newline     = true
+trim_trailing_whitespace = true
+
+[*.zsh]
+indent_style = space
+indent_size  = 4
+
+[*.yml]
+indent_style = space
+indent_size  = 2
+
+[*.md]
+# Trailing whitespace is intentional in Markdown (line breaks)
+trim_trailing_whitespace = false
+indent_style             = space
+indent_size              = 2
+
+[Makefile]
+indent_style = tab
