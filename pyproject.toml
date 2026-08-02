@@ -1,0 +1,30 @@
+[project]
+name = "network-scripts"
+version = "0.1.0"
+description = "Misc Juniper-related scripts designed to run via uv run --script"
+readme = "README.md"
+requires-python = "==3.12.*"
+dependencies = [
+    "junos-eznc",
+    "lxml>=5.4.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pre-commit>=4",
+    "ruff>=0.15",
+]
+
+[tool.pyright]
+exclude = [".venv"]
+venvPath = "."
+venv = ".venv"
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+
+[dependency-groups]
+dev = [
+    "lxml-stubs>=0.5.1",
+]
