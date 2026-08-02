@@ -561,6 +561,36 @@ def collect_utm_content(dev, date):
     print("Done")
 
 
+def collect_coredumps(dev):
+    """collect core dumps from the device"""
+
+    print("Checking for core dumps")
+    core_dumps = dev.rpc.get_system_core_dumps()
+    file_count = core_dumps.findtext("directory/total-files")
+
+    # enumerate core dump paths from the RPC output (the shell glob
+    # "/var/crash/*" does not expand, so each file is transferred individually)
+    paths = set()
+    for output in core_dumps.xpath(".//output"):
+        if output.text is None:
+            continue
+        for line in output.text.splitlines():
+            tokens = line.split()
+            if tokens and tokens[0].startswith("/") and "No such file" not in line:
+                paths.add(tokens[0])
+
+    if not paths:
+        if file_count is not None and file_count.isdigit() and int(file_count) > 0:
+            print("WARNING: core dumps present but their paths could not be enumerated")
+        else:
+            print("No core dumps to collect")
+        return
+
+    print(f"Found {len(paths)} core dump file(s)")
+    for path in sorted(paths):
+        copy_file(dev, path)
+
+
 def check_ospf(dev):
     """check if the device config has ospf"""
 
@@ -584,6 +614,23 @@ def check_multicast(dev):
     data = dev.rpc.get_config(filter_xml=xml_filter, options={"format": "set"})
     config = etree.tostring(data, encoding="unicode")
     return any(proto in config for proto in (" pim ", " igmp ", " msdp "))
+
+
+def check_bgp(dev):
+    """check if the device config has bgp"""
+
+    xml_filter = "<configuration><protocols/></configuration>"
+    data = dev.rpc.get_config(filter_xml=xml_filter, options={"format": "set"})
+    return bool(" bgp " in etree.tostring(data, encoding="unicode"))
+
+
+def check_ipsec(dev):
+    """check if the device config has ike/ipsec (security-fabric)"""
+
+    xml_filter = "<configuration><security/></configuration>"
+    data = dev.rpc.get_config(filter_xml=xml_filter, options={"format": "set"})
+    config = etree.tostring(data, encoding="unicode")
+    return any(tag in config for tag in (" ike ", " ipsec "))
 
 
 # Method for human readable size-output
@@ -668,15 +715,21 @@ def main():
                 time.sleep(30)
                 collect_security_flow(dev, date)
                 time.sleep(30)
-                collect_ipsec_routed(dev, date, is_cluster)
-                time.sleep(30)
-                collect_ipsec_policy(dev, date, is_cluster)
-                time.sleep(30)
-                collect_ipsec_dyn(dev, date, is_cluster)
+                running_ipsec = check_ipsec(dev)
+                if running_ipsec:
+                    time.sleep(10)
+                    collect_ipsec_routed(dev, date, is_cluster)
+                    time.sleep(30)
+                    collect_ipsec_policy(dev, date, is_cluster)
+                    time.sleep(30)
+                    collect_ipsec_dyn(dev, date, is_cluster)
             time.sleep(30)
             collect_high_cpu(dev, date, is_srx)
             time.sleep(30)
-            collect_bgp(dev, date)
+            running_bgp = check_bgp(dev)
+            if running_bgp:
+                time.sleep(10)
+                collect_bgp(dev, date)
 
             time.sleep(30)
             running_ospf = check_ospf(dev)
@@ -707,6 +760,9 @@ def main():
                 collect_utm_web(dev, date)
                 time.sleep(30)
                 collect_utm_content(dev, date)
+
+            time.sleep(30)
+            collect_coredumps(dev)
     finally:
         if dev.connected:
             try:
