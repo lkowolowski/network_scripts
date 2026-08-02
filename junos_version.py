@@ -7,16 +7,13 @@
 # ]
 # ///
 
-import sys
-from selenium import webdriver
-from selenium.webdriver.common.keys import Keys
+from selenium import webdriver  # pyright: ignore[reportMissingImports]
+
 
 def main() -> None:
     """foo"""
 
-    junos_versions_url = "https://supportportal.juniper.net/s/article/Junos-Software-Versions-Suggested-Releases-to-Consider-and-Evaluate"
-
-    driver = webdriver.Chrome('/opt/homebrew/bin/chromedriver')
+    driver = webdriver.Chrome("/opt/homebrew/bin/chromedriver")
 
     # Open the Python website
     driver.get("https://www.python.org")
@@ -25,15 +22,16 @@ def main() -> None:
     print(driver.title)
 
     # Find the search bar using its name attribute
-    #search_bar = driver.find_element_by_name("q")
-    #search_bar.clear()
-    #search_bar.send_keys("getting started with python")
-    #search_bar.send_keys(Keys.RETURN)
+    # search_bar = driver.find_element_by_name("q")
+    # search_bar.clear()
+    # search_bar.send_keys("getting started with python")
+    # search_bar.send_keys(Keys.RETURN)
 
     # Print the current URL
     print(driver.current_url)
 
     driver.quit()
+
 
 if __name__ == "__main__":
     main()

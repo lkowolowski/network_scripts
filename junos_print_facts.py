@@ -14,20 +14,20 @@
 #
 import argparse
 from pprint import pprint
-from jnpr.junos.utils.start_shell import StartShell
+
 from jnpr.junos import Device
-from jnpr.junos.utils.scp import SCP
-from jnpr.junos.utils.fs import FS
+
 
 def main():
     """main"""
-    parser = argparse.ArgumentParser(usage='jtac_collector.py -d <hostname> -u <username>')
-    parser.add_argument('-d', '--device', help='Enter a Juniper device (name or IP)')
-    parser.add_argument('-u', '--username', help='Enter the username')
+    parser = argparse.ArgumentParser(usage="junos_print_facts.py -d <hostname> -u <username>")
+    parser.add_argument("-d", "--device", help="Enter a Juniper device (name or IP)")
+    parser.add_argument("-u", "--username", help="Enter the username")
+    parser.add_argument("-k", "--ssh-key", help="Path to SSH private key for authentication")
     args = parser.parse_args()
 
     if not args.device:
-        host = input('Device hostname')
+        host = input("Device hostname")
     else:
         host = args.device
 
@@ -37,21 +37,25 @@ def main():
         username = args.username
 
     # connect to the device with IP-address, login user and passwort
-    dev = Device(host=host, user=username)
+    connect_kwargs = {"host": host, "user": username}
+    if args.ssh_key:
+        connect_kwargs["ssh_private_key_file"] = args.ssh_key
+    dev = Device(**connect_kwargs)
     dev.open()
     # needed for file compression on srx340 because they are slow
-    dev.timeout=120
-    dev.banner_timeout=60
+    dev.timeout = 120
+    dev.banner_timeout = 60  # pyright: ignore[reportAttributeAccessIssue]
 
     print("Connected successfully...")
 
     # Collect all our bits
     pprint(dev.facts)
 
-    #print ("Model: "+dev.facts['model'])
+    # print ("Model: "+dev.facts['model'])
 
     dev.close()
     print("Connection closed...")
 
 
-main()
+if __name__ == "__main__":
+    main()

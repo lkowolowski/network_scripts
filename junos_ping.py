@@ -18,14 +18,15 @@ import json
 import subprocess
 import sys
 from io import StringIO
-from lxml import etree
+
 from jnpr.junos import Device
 from jnpr.junos.exception import (
     ConnectAuthError,
+    ConnectError,
     ConnectRefusedError,
     ConnectTimeoutError,
-    ConnectError,
 )
+from lxml import etree
 
 
 def _escape_lp(value: str) -> str:
@@ -92,18 +93,14 @@ def _emit_metrics(device, target, routing_instance, fields, output_format):
 def main():
     """main"""
 
-    parser = argparse.ArgumentParser(
-        description="Execute a ping from a Junos device using NETCONF"
-    )
+    parser = argparse.ArgumentParser(description="Execute a ping from a Junos device using NETCONF")
     parser.add_argument(
         "-d",
         "--device",
         required=True,
         help="Juniper device (hostname or IP) to source the ping from",
     )
-    parser.add_argument(
-        "-t", "--target", required=True, help="Target IP address to ping"
-    )
+    parser.add_argument("-t", "--target", required=True, help="Target IP address to ping")
     parser.add_argument(
         "-c",
         "--count",
@@ -122,6 +119,11 @@ def main():
         "--username",
         default="automation",
         help="Username to connect as (default: automation)",
+    )
+    parser.add_argument(
+        "-k",
+        "--ssh-key",
+        help="Path to SSH private key for authentication",
     )
     parser.add_argument(
         "-o",
@@ -177,15 +179,18 @@ def main():
         return
 
     try:
-        with Device(host=device, user=username, gather_facts=False) as dev:
+        connect_kwargs = {"host": device, "user": username, "gather_facts": False}
+        if args.ssh_key:
+            connect_kwargs["ssh_private_key_file"] = args.ssh_key
+        with Device(**connect_kwargs) as dev:
             # needed for file compression on srx340 because they are slow
             dev.timeout = 120
-            dev.banner_timeout = 60
+            dev.banner_timeout = 60  # pyright: ignore[reportAttributeAccessIssue]
 
             if verbose:
-                print("Connected successfully to {}".format(device), file=sys.stderr)
+                print(f"Connected successfully to {device}", file=sys.stderr)
                 print(
-                    "Pinging device {} from {}".format(target, routing_instance),
+                    f"Pinging device {target} from {routing_instance}",
                     file=sys.stderr,
                 )
 
@@ -214,9 +219,7 @@ def main():
             rtt_stddev_seconds = _microseconds_to_seconds(_find_int(root, "rtt-stddev"))
 
             probes_sent = probes_sent_val if probes_sent_val is not None else 0
-            responses_received = (
-                responses_received_val if responses_received_val is not None else 0
-            )
+            responses_received = responses_received_val if responses_received_val is not None else 0
             success = 1 if responses_received > 0 else 0
 
             fields = {
