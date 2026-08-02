@@ -150,6 +150,32 @@ def collect_security_flow(dev, date):
     print("Done")
 
 
+def collect_high_cpu(dev, date, is_srx):
+    """collect cpu statistics"""
+    # File to create on remote device
+    file = f"/var/tmp/{date}_{dev.hostname}_high_cpu.txt"
+
+    print("Collecting high cpu information")
+    with StartShell(dev) as ss:
+        ss.run(f'cli -c "show chassis routing-engine | save {file}"')
+        ss.run(f'cli -c "show system processes extensive | append {file}"')
+        ss.run(f'cli -c "show system users | append {file}"')
+        ss.run(f'cli -c "show system connections | append {file}"')
+        ss.run(f'cli -c "show system statistics | append {file}"')
+        ss.run(f'cli -c "show chassis forwarding | append {file}"')
+        if is_srx:
+            ss.run(f'cli -c "show security monitor performance spu | append {file}"')
+            ss.run(f'cli -c "show security monitor performance sess | append {file}"')
+
+    # Copy file to localhost
+    copy_file(dev, file)
+
+    # Cleanup after ourselves
+    delete_file(dev, file)
+
+    print("Done")
+
+
 def collect_ospf(dev, date):
     """collect ospf information"""
 
@@ -202,6 +228,27 @@ def collect_ospf3(dev, date):
     print("Done")
 
 
+def collect_bgp(dev, date):
+    """collect bgp information"""
+    # File to create on remote device
+    file = f"/var/tmp/{date}_{dev.hostname}_bgp.txt"
+
+    print("Collecting BGP information")
+    with StartShell(dev) as ss:
+        ss.run(f'cli -c "show bgp summary | save {file}"')
+        ss.run(f'cli -c "show bgp neighbor | append {file}"')
+        ss.run(f'cli -c "show route forwarding-table | append {file}"')
+        ss.run(f'cli -c "show route resolution unresolved | append {file}"')
+
+    # Copy file to localhost
+    copy_file(dev, file)
+
+    # Cleanup after ourselves
+    delete_file(dev, file)
+
+    print("Done")
+
+
 def check_ospf(dev):
     """check if the device config has ospf"""
 
@@ -236,6 +283,12 @@ def main():
     parser.add_argument("-d", "--device", help="Enter a Juniper device (name or IP)")
     parser.add_argument("-u", "--username", help="Enter the username")
     parser.add_argument("-k", "--ssh-key", help="Path to SSH private key for authentication")
+    parser.add_argument(
+        "-a",
+        "--all",
+        action="store_true",
+        help="Collect everything (default is just RSI and logs)",
+    )
     args = parser.parse_args()
 
     if not args.device:
@@ -286,23 +339,29 @@ def main():
         collect_rsi(dev, date, is_cluster)
         time.sleep(30)
         collect_logs(dev, date)
-        time.sleep(30)
-        collect_chassis(dev, date, is_cluster)
-        if is_srx:
+
+        if args.all:
             time.sleep(30)
-            collect_security_flow(dev, date)
+            collect_chassis(dev, date, is_cluster)
+            if is_srx:
+                time.sleep(30)
+                collect_security_flow(dev, date)
+            time.sleep(30)
+            collect_high_cpu(dev, date, is_srx)
+            time.sleep(30)
+            collect_bgp(dev, date)
 
-        time.sleep(30)
-        running_ospf = check_ospf(dev)
-        if running_ospf:
-            time.sleep(10)
-            collect_ospf(dev, date)
+            time.sleep(30)
+            running_ospf = check_ospf(dev)
+            if running_ospf:
+                time.sleep(10)
+                collect_ospf(dev, date)
 
-        time.sleep(30)
-        running_ospf3 = check_ospf3(dev)
-        if running_ospf3:
-            time.sleep(10)
-            collect_ospf3(dev, date)
+            time.sleep(30)
+            running_ospf3 = check_ospf3(dev)
+            if running_ospf3:
+                time.sleep(10)
+                collect_ospf3(dev, date)
     finally:
         if dev.connected:
             dev.close()
