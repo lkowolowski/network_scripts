@@ -1,4 +1,4 @@
-## Documentation Index
+# Documentation Index
 
 Per-script guides live alongside the source files. Choose the script you need for full capabilities, usage, and integration notes:
 

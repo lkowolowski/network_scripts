@@ -1,7 +1,7 @@
-## junos_print_facts.py
+# junos_print_facts.py
 
-```
-usage: jtac_collector.py -d <hostname> -u <username>
+```text
+usage: junos_print_facts.py -d <hostname> -u <username>
 
 options:
   -h, --help            show this help message and exit
@@ -9,4 +9,6 @@ options:
                         Enter a Juniper device (name or IP)
   -u USERNAME, --username USERNAME
                         Enter the username
+  -k SSH_KEY, --ssh-key SSH_KEY
+                        Path to SSH private key for authentication
 ```

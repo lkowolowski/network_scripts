@@ -1,6 +1,6 @@
-## jtac_collector.py
+# jtac_collector.py
 
-```
+```text
 usage: jtac_collector.py -d <hostname> -u <username>
 
 options:
@@ -9,4 +9,7 @@ options:
                         Enter a Juniper device (name or IP)
   -u USERNAME, --username USERNAME
                         Enter the username
+  -k SSH_KEY, --ssh-key SSH_KEY
+                        Path to SSH private key for authentication
+  -a, --all             Collect everything (default is just RSI and logs)
 ```

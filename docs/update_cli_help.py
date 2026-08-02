@@ -6,7 +6,6 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
-
 ROOT = Path(__file__).resolve().parents[1]
 DOCS_DIR = Path(__file__).resolve().parent
 GENERATED_DIR = DOCS_DIR / "generated"
@@ -47,7 +46,7 @@ def main() -> None:
         help_text = capture_help(script, name)
         target = GENERATED_DIR / f"{name}_help.md"
         target.write_text(
-            f"## {script}\n\n```\n{help_text}\n```\n",
+            f"# {script}\n\n```text\n{help_text}\n```\n",
             encoding="utf-8",
         )
         print(f"Wrote {target.relative_to(ROOT)}")

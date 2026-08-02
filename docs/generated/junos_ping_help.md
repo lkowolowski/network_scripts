@@ -1,8 +1,8 @@
-## junos_ping.py
+# junos_ping.py
 
-```
+```text
 usage: junos_ping.py [-h] -d DEVICE -t TARGET [-c COUNT] [-i VRF]
-                     [-u USERNAME] [-o {line,json}] [-v]
+                     [-u USERNAME] [-k SSH_KEY] [-o {line,json}] [-v]
 
 Execute a ping from a Junos device using NETCONF
 
@@ -18,6 +18,8 @@ options:
   -i VRF, --vrf VRF     VRF / routing-instance to use (default: default)
   -u USERNAME, --username USERNAME
                         Username to connect as (default: automation)
+  -k SSH_KEY, --ssh-key SSH_KEY
+                        Path to SSH private key for authentication
   -o {line,json}, --output-format {line,json}
                         Telegraf output format for stdout (default: line
                         protocol)

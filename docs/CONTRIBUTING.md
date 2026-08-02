@@ -1,4 +1,4 @@
-## Documentation Workflow
+# Documentation Workflow
 
 This repo keeps one Markdown file per script under `docs/`. To add or update docs:
 
@@ -7,13 +7,15 @@ This repo keeps one Markdown file per script under `docs/`. To add or update doc
    - Keep instructions concise; offload long examples to code blocks.
 2. **Update the index:** add/remove entries in `docs/README.md` and the summary table in the root `README.md`.
 3. **Regenerate CLI help snapshots:**
+
    ```bash
    python docs/update_cli_help.py
    ```
+
    This writes `docs/generated/*_help.md` so every script's `--help` stays in sync with documentation.
 4. **Verify links:** ensure each per-script doc references its generated help file via `generated/<name>_help.md`.
 
-### Adding a New Script
+## Adding a New Script
 
 1. Place the script at the repo root (matching the existing pattern) and ensure it uses uv for dependencies.
 2. Add a doc file under `docs/` plus an entry in `docs/README.md` and the main README table.
