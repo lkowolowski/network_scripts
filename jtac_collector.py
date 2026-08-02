@@ -18,7 +18,7 @@ import os
 import time
 
 from jnpr.junos import Device
-from jnpr.junos.exception import ConnectError
+from jnpr.junos.exception import ConnectError, RpcError
 from jnpr.junos.utils.fs import FS
 from jnpr.junos.utils.scp import SCP
 from jnpr.junos.utils.start_shell import StartShell
@@ -145,6 +145,148 @@ def collect_security_flow(dev, date):
     copy_file(dev, file)
 
     # cleanup after ourselves
+    delete_file(dev, file)
+
+    print("Done")
+
+
+def get_ike_sa_indices(dev):
+    """enumerate IKE security association indices via RPC"""
+    try:
+        data = dev.rpc.get_ike_security_associations_information()
+        indices = [
+            sa.findtext("ike-sa-index") for sa in data.findall(".//ike-security-associations")
+        ]
+        return [idx for idx in indices if idx]
+    except RpcError as err:
+        print(f"WARNING: could not enumerate IKE SAs: {err}")
+        return []
+
+
+def collect_ipsec_routed(dev, date, is_cluster):
+    """collect ipsec routed tunnel information"""
+    # File to create on remote device
+    file = f"/var/tmp/{date}_{dev.hostname}_ipsec_routed.txt"
+
+    print("Collecting IPSec routed tunnel information")
+    ike_indices = get_ike_sa_indices(dev)
+    with StartShell(dev) as ss:
+        if is_cluster:
+            ss.run(
+                f'cli -c "show security ike security-association all-members | save {file}"',
+                timeout=120,
+            )
+        else:
+            ss.run(f'cli -c "show security ike security-association | save {file}"', timeout=120)
+        for idx in ike_indices:
+            ss.run(
+                f'cli -c "show security ike security-association index {idx} detail | append {file}"',
+                timeout=120,
+            )
+        if is_cluster:
+            ss.run(
+                f'cli -c "show security ipsec security-association all-members | append {file}"',
+                timeout=120,
+            )
+        else:
+            ss.run(
+                f'cli -c "show security ipsec security-association | append {file}"', timeout=120
+            )
+        ss.run(f'cli -c "show security ipsec statistics | append {file}"')
+        ss.run(f'cli -c "show security ipsec next-hop-tunnels | append {file}"')
+        ss.run(f'cli -c "show security flow session tunnel | append {file}"', timeout=120)
+        ss.run(f'cli -c "show route | append {file}"', timeout=120)
+        ss.run(f'cli -c "show security pki local-cert detail | append {file}"')
+        ss.run(f'cli -c "show security pki ca-cert detail | append {file}"')
+        ss.run(f'cli -c "show security pki crl detail | append {file}"')
+
+    # Copy file to localhost
+    copy_file(dev, file)
+
+    # Cleanup after ourselves
+    delete_file(dev, file)
+
+    print("Done")
+
+
+def collect_ipsec_policy(dev, date, is_cluster):
+    """collect ipsec policy tunnel information"""
+    # File to create on remote device
+    file = f"/var/tmp/{date}_{dev.hostname}_ipsec_policy.txt"
+
+    print("Collecting IPSec policy tunnel information")
+    ike_indices = get_ike_sa_indices(dev)
+    with StartShell(dev) as ss:
+        ss.run(f'cli -c "show system licenses | save {file}"')
+        if is_cluster:
+            ss.run(
+                f'cli -c "show security ike security-association all-members | append {file}"',
+                timeout=120,
+            )
+        else:
+            ss.run(f'cli -c "show security ike security-association | append {file}"', timeout=120)
+        for idx in ike_indices:
+            ss.run(
+                f'cli -c "show security ike security-association index {idx} detail | append {file}"',
+                timeout=120,
+            )
+        if is_cluster:
+            ss.run(
+                f'cli -c "show security ipsec security-association all-members | append {file}"',
+                timeout=120,
+            )
+        else:
+            ss.run(
+                f'cli -c "show security ipsec security-association | append {file}"', timeout=120
+            )
+        ss.run(f'cli -c "show security ipsec statistics | append {file}"')
+        ss.run(f'cli -c "show security ipsec next-hop-tunnels | append {file}"')
+        ss.run(f'cli -c "show security flow session tunnel | append {file}"', timeout=120)
+        ss.run(f'cli -c "show security pki local-cert detail | append {file}"')
+        ss.run(f'cli -c "show security pki ca-cert detail | append {file}"')
+        ss.run(f'cli -c "show security pki crl detail | append {file}"')
+        ss.run(f'cli -c "show security policies detail | append {file}"', timeout=120)
+
+    # Copy file to localhost
+    copy_file(dev, file)
+
+    # Cleanup after ourselves
+    delete_file(dev, file)
+
+    print("Done")
+
+
+def collect_ipsec_dyn(dev, date, is_cluster):
+    """collect dynamic ipsec information"""
+    # File to create on remote device
+    file = f"/var/tmp/{date}_{dev.hostname}_ipsec_dyn.txt"
+
+    print("Collecting IPSec dynamic VPN information")
+    ike_indices = get_ike_sa_indices(dev)
+    with StartShell(dev) as ss:
+        if is_cluster:
+            ss.run(
+                f'cli -c "show security ike security-association all-members | save {file}"',
+                timeout=120,
+            )
+        else:
+            ss.run(f'cli -c "show security ike security-association | save {file}"', timeout=120)
+        for idx in ike_indices:
+            ss.run(
+                f'cli -c "show security ike security-association index {idx} detail | append {file}"',
+                timeout=120,
+            )
+        ss.run(f'cli -c "show security ike active-peer | append {file}"', timeout=120)
+        ss.run(f'cli -c "show security ipsec security-association | append {file}"', timeout=120)
+        ss.run(f'cli -c "show security ipsec statistics | append {file}"')
+        ss.run(f'cli -c "show security dynamic-vpn client version | append {file}"')
+        ss.run(f'cli -c "show security dynamic-vpn users detail | append {file}"', timeout=120)
+        ss.run(f'cli -c "show system licenses | append {file}"')
+
+    # Copy file to localhost
+    copy_file(dev, file)
+
+    # Cleanup after ourselves
     delete_file(dev, file)
 
     print("Done")
@@ -346,6 +488,12 @@ def main():
             if is_srx:
                 time.sleep(30)
                 collect_security_flow(dev, date)
+                time.sleep(30)
+                collect_ipsec_routed(dev, date, is_cluster)
+                time.sleep(30)
+                collect_ipsec_policy(dev, date, is_cluster)
+                time.sleep(30)
+                collect_ipsec_dyn(dev, date, is_cluster)
             time.sleep(30)
             collect_high_cpu(dev, date, is_srx)
             time.sleep(30)
