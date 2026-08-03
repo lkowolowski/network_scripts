@@ -539,46 +539,29 @@ def collect_coredumps(dev):
         copy_file(dev, path)
 
 
-def check_ospf(dev):
-    """check if the device config has ospf"""
-
-    xml_filter = "<configuration><protocols/></configuration>"
-    data = dev.rpc.get_config(filter_xml=xml_filter, options={"format": "set"})
-    return bool(" ospf " in etree.tostring(data, encoding="unicode"))
-
-
-def check_ospf3(dev):
-    """check if the device config has ospf3"""
-
-    xml_filter = "<configuration><protocols/></configuration>"
-    data = dev.rpc.get_config(filter_xml=xml_filter, options={"format": "set"})
-    return bool(" ospf3 " in etree.tostring(data, encoding="unicode"))
-
-
-def check_multicast(dev):
-    """check if the device config has multicast protocols (pim, igmp, msdp)"""
+def configured_protocols(dev):
+    """return protocol enablement flags (single RPC for <protocols>)"""
 
     xml_filter = "<configuration><protocols/></configuration>"
     data = dev.rpc.get_config(filter_xml=xml_filter, options={"format": "set"})
     config = etree.tostring(data, encoding="unicode")
-    return any(proto in config for proto in (" pim ", " igmp ", " msdp "))
+    return {
+        "bgp": " bgp " in config,
+        "ospf": " ospf " in config,
+        "ospf3": " ospf3 " in config,
+        "multicast": any(proto in config for proto in (" pim ", " igmp ", " msdp ")),
+    }
 
 
-def check_bgp(dev):
-    """check if the device config has bgp"""
-
-    xml_filter = "<configuration><protocols/></configuration>"
-    data = dev.rpc.get_config(filter_xml=xml_filter, options={"format": "set"})
-    return bool(" bgp " in etree.tostring(data, encoding="unicode"))
-
-
-def check_ipsec(dev):
-    """check if the device config has ike/ipsec (security-fabric)"""
+def configured_security(dev):
+    """return security-feature enablement flags (single RPC for <security>)"""
 
     xml_filter = "<configuration><security/></configuration>"
     data = dev.rpc.get_config(filter_xml=xml_filter, options={"format": "set"})
     config = etree.tostring(data, encoding="unicode")
-    return any(tag in config for tag in (" ike ", " ipsec "))
+    return {
+        "ipsec": any(tag in config for tag in (" ike ", " ipsec ")),
+    }
 
 
 # Method for human readable size-output
@@ -657,14 +640,19 @@ def main():
         collect_logs(dev, date)
 
         if args.all:
+            protocols = configured_protocols(dev)
+            has_bgp = protocols["bgp"]
+            has_ospf = protocols["ospf"]
+            has_ospf3 = protocols["ospf3"]
+            has_multicast = protocols["multicast"]
+            has_ipsec = configured_security(dev)["ipsec"] if is_srx else False
             time.sleep(30)
             collect_chassis(dev, date, is_cluster)
             if is_srx:
                 time.sleep(30)
                 collect_security_flow(dev, date)
                 time.sleep(30)
-                running_ipsec = check_ipsec(dev)
-                if running_ipsec:
+                if has_ipsec:
                     time.sleep(10)
                     collect_ipsec_routed(dev, date, is_cluster)
                     time.sleep(30)
@@ -674,26 +662,22 @@ def main():
             time.sleep(30)
             collect_high_cpu(dev, date, is_srx)
             time.sleep(30)
-            running_bgp = check_bgp(dev)
-            if running_bgp:
+            if has_bgp:
                 time.sleep(10)
                 collect_bgp(dev, date)
 
             time.sleep(30)
-            running_ospf = check_ospf(dev)
-            if running_ospf:
+            if has_ospf:
                 time.sleep(10)
                 collect_ospf(dev, date)
 
             time.sleep(30)
-            running_ospf3 = check_ospf3(dev)
-            if running_ospf3:
+            if has_ospf3:
                 time.sleep(10)
                 collect_ospf3(dev, date)
 
             time.sleep(30)
-            running_multicast = check_multicast(dev)
-            if running_multicast:
+            if has_multicast:
                 time.sleep(10)
                 collect_multicast(dev, date)
 
