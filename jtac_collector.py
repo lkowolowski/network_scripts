@@ -70,31 +70,51 @@ def copy_file(dev, file):
         scp.get(file, path)
 
 
+def run_show_cmds(ss, file, commands):
+    """Run a list of show commands, saving the first and appending the rest"""
+
+    for index, command in enumerate(commands):
+        if isinstance(command, tuple):
+            cmd, timeout = command if len(command) == 2 else (command[0], None)
+        else:
+            cmd, timeout = command, None
+        if not cmd:
+            continue
+        action = "save" if index == 0 else "append"
+        cli_cmd = f'cli -c "{cmd} | {action} {file}"'
+        if timeout is not None:
+            ss.run(cli_cmd, timeout=timeout)
+        else:
+            ss.run(cli_cmd)
+
+
+def collect_via_shell(dev, date, label, description, commands, done_message="Done"):
+    """Generic collector helper that handles remote file lifecycle"""
+
+    file = f"/var/tmp/{date}_{dev.hostname}_{label}.txt"
+    print(description)
+    try:
+        with start_shell(dev) as ss:
+            run_show_cmds(ss, file, commands)
+    finally:
+        copy_file(dev, file)
+        delete_file(dev, file)
+        print(done_message)
+
+
 # list of functions we'll call to generate and then collect the data
 def collect_rsi(dev, date, is_cluster):
     """collect 'request support information'"""
-    # File to create on remote device
-    file = f"/var/tmp/{date}_{dev.hostname}_rsi.txt"
-
-    print("Creating RSI...")
-
-    # If the RSI command fails, the file won't be created; copy_file handles the
-    # missing file gracefully and skips the transfer.
-    # RSI can take minutes on busy boxes; give the shell run a generous timeout.
-    with start_shell(dev) as ss:
-        # find a way to collect this from all members in a cluster
-        if is_cluster:
-            ss.run(f'cli -c "request support information all-members | save {file}"', timeout=600)
-        else:
-            ss.run(f'cli -c "request support information | save {file}"', timeout=600)
-
-    # Copy file to localhost
-    copy_file(dev, file)
-
-    # cleanup after ourselves
-    delete_file(dev, file)
-
-    print("Done")
+    command = (
+        "request support information all-members" if is_cluster else "request support information"
+    )
+    collect_via_shell(
+        dev,
+        date,
+        "rsi",
+        "Creating RSI...",
+        [(command, 600)],
+    )
 
 
 def collect_logs(dev, date):
@@ -118,48 +138,42 @@ def collect_logs(dev, date):
 
 def collect_chassis(dev, date, is_cluster):
     """collect chassis information"""
-    # file to create on remote device
-    file = f"/var/tmp/{date}_{dev.hostname}_chassis.txt"
-
-    print("Collecting Chassis Information")
-    with start_shell(dev) as ss:
-        ss.run(f'cli -c "show chassis fpc pic-status | save {file}"')
-        if is_cluster:
-            # collect all the bits that are cluster specific
-            ss.run(f'cli -c "show chassis cluster status | append {file}"')
-            ss.run(f'cli -c "show chassis cluster interfaces | append {file}"')
-            ss.run(f'cli -c "show chassis cluster statistics | append {file}"')
-            ss.run(f'cli -c "show chassis cluster information | append {file}"')
-            ss.run(f'cli -c "show chassis cluster ip-monitoring status | append {file}"')
-
-    # Copy file to localhost
-    copy_file(dev, file)
-
-    # Cleanup after ourselves
-    delete_file(dev, file)
-
-    print("Done with chassis information")
+    commands: list[tuple[str, int | None]] = [("show chassis fpc pic-status", None)]
+    if is_cluster:
+        commands.extend(
+            [
+                ("show chassis cluster status", None),
+                ("show chassis cluster interfaces", None),
+                ("show chassis cluster statistics", None),
+                ("show chassis cluster information", None),
+                ("show chassis cluster ip-monitoring status", None),
+            ]
+        )
+    collect_via_shell(
+        dev,
+        date,
+        "chassis",
+        "Collecting Chassis Information",
+        commands,
+        done_message="Done with chassis information",
+    )
 
 
 def collect_security_flow(dev, date):
     """collect security flow information"""
-    # file to create on remote device
-    file = f"/var/tmp/{date}_{dev.hostname}_security_flows.txt"
-
-    print("Collecting security flow information")
-    with start_shell(dev) as ss:
-        ss.run(f'cli -c "show security flow session summary | save {file}"')
-        ss.run(f'cli -c "show security flow cp-session summary | append {file}"')
-        ss.run(f'cli -c "show interface extensive | append {file}"')
-        ss.run(f'cli -c "show arp no-resolve | append {file}"')
-
-    # copy file to localhost
-    copy_file(dev, file)
-
-    # cleanup after ourselves
-    delete_file(dev, file)
-
-    print("Done")
+    commands: list[tuple[str, int | None]] = [
+        ("show security flow session summary", 120),
+        ("show security flow cp-session summary", 120),
+        ("show interface extensive", 120),
+        ("show arp no-resolve", None),
+    ]
+    collect_via_shell(
+        dev,
+        date,
+        "security_flows",
+        "Collecting security flow information",
+        commands,
+    )
 
 
 def get_ike_sa_indices(dev):
@@ -177,388 +191,322 @@ def get_ike_sa_indices(dev):
 
 def collect_ipsec_routed(dev, date, is_cluster):
     """collect ipsec routed tunnel information"""
-    # File to create on remote device
-    file = f"/var/tmp/{date}_{dev.hostname}_ipsec_routed.txt"
-
-    print("Collecting IPSec routed tunnel information")
     ike_indices = get_ike_sa_indices(dev)
-    with start_shell(dev) as ss:
-        if is_cluster:
-            ss.run(
-                f'cli -c "show security ike security-association all-members | save {file}"',
-                timeout=120,
-            )
-        else:
-            ss.run(f'cli -c "show security ike security-association | save {file}"', timeout=120)
-        for idx in ike_indices:
-            ss.run(
-                f'cli -c "show security ike security-association index {idx} detail | append {file}"',
-                timeout=120,
-            )
-        if is_cluster:
-            ss.run(
-                f'cli -c "show security ipsec security-association all-members | append {file}"',
-                timeout=120,
-            )
-        else:
-            ss.run(
-                f'cli -c "show security ipsec security-association | append {file}"', timeout=120
-            )
-        ss.run(f'cli -c "show security ipsec statistics | append {file}"')
-        ss.run(f'cli -c "show security ipsec next-hop-tunnels | append {file}"')
-        ss.run(f'cli -c "show security flow session tunnel | append {file}"', timeout=120)
-        ss.run(f'cli -c "show route | append {file}"', timeout=120)
-        ss.run(f'cli -c "show security pki local-cert detail | append {file}"')
-        ss.run(f'cli -c "show security pki ca-cert detail | append {file}"')
-        ss.run(f'cli -c "show security pki crl detail | append {file}"')
-
-    # Copy file to localhost
-    copy_file(dev, file)
-
-    # Cleanup after ourselves
-    delete_file(dev, file)
-
-    print("Done")
+    ike_summary = (
+        "show security ike security-association all-members"
+        if is_cluster
+        else "show security ike security-association"
+    )
+    ipsec_summary = (
+        "show security ipsec security-association all-members"
+        if is_cluster
+        else "show security ipsec security-association"
+    )
+    commands: list[tuple[str, int | None]] = [(ike_summary, 120)]
+    commands.extend(
+        (f"show security ike security-association index {idx} detail", 120) for idx in ike_indices
+    )
+    commands.append((ipsec_summary, 120))
+    commands.extend(
+        [
+            ("show security ipsec statistics", None),
+            ("show security ipsec next-hop-tunnels", None),
+            ("show security flow session tunnel", 120),
+            ("show route", 120),
+            ("show security pki local-cert detail", None),
+            ("show security pki ca-cert detail", None),
+            ("show security pki crl detail", None),
+        ]
+    )
+    collect_via_shell(
+        dev,
+        date,
+        "ipsec_routed",
+        "Collecting IPSec routed tunnel information",
+        commands,
+    )
 
 
 def collect_ipsec_policy(dev, date, is_cluster):
     """collect ipsec policy tunnel information"""
-    # File to create on remote device
-    file = f"/var/tmp/{date}_{dev.hostname}_ipsec_policy.txt"
-
-    print("Collecting IPSec policy tunnel information")
     ike_indices = get_ike_sa_indices(dev)
-    with start_shell(dev) as ss:
-        ss.run(f'cli -c "show system licenses | save {file}"')
-        if is_cluster:
-            ss.run(
-                f'cli -c "show security ike security-association all-members | append {file}"',
-                timeout=120,
-            )
-        else:
-            ss.run(f'cli -c "show security ike security-association | append {file}"', timeout=120)
-        for idx in ike_indices:
-            ss.run(
-                f'cli -c "show security ike security-association index {idx} detail | append {file}"',
-                timeout=120,
-            )
-        if is_cluster:
-            ss.run(
-                f'cli -c "show security ipsec security-association all-members | append {file}"',
-                timeout=120,
-            )
-        else:
-            ss.run(
-                f'cli -c "show security ipsec security-association | append {file}"', timeout=120
-            )
-        ss.run(f'cli -c "show security ipsec statistics | append {file}"')
-        ss.run(f'cli -c "show security ipsec next-hop-tunnels | append {file}"')
-        ss.run(f'cli -c "show security flow session tunnel | append {file}"', timeout=120)
-        ss.run(f'cli -c "show security pki local-cert detail | append {file}"')
-        ss.run(f'cli -c "show security pki ca-cert detail | append {file}"')
-        ss.run(f'cli -c "show security pki crl detail | append {file}"')
-        ss.run(f'cli -c "show security policies detail | append {file}"', timeout=120)
-
-    # Copy file to localhost
-    copy_file(dev, file)
-
-    # Cleanup after ourselves
-    delete_file(dev, file)
-
-    print("Done")
+    ike_summary = (
+        "show security ike security-association all-members"
+        if is_cluster
+        else "show security ike security-association"
+    )
+    ipsec_summary = (
+        "show security ipsec security-association all-members"
+        if is_cluster
+        else "show security ipsec security-association"
+    )
+    commands: list[tuple[str, int | None]] = [("show system licenses", None), (ike_summary, 120)]
+    commands.extend(
+        (f"show security ike security-association index {idx} detail", 120) for idx in ike_indices
+    )
+    commands.append((ipsec_summary, 120))
+    commands.extend(
+        [
+            ("show security ipsec statistics", None),
+            ("show security ipsec next-hop-tunnels", None),
+            ("show security flow session tunnel", 120),
+            ("show security pki local-cert detail", None),
+            ("show security pki ca-cert detail", None),
+            ("show security pki crl detail", None),
+            ("show security policies detail", 120),
+        ]
+    )
+    collect_via_shell(
+        dev,
+        date,
+        "ipsec_policy",
+        "Collecting IPSec policy tunnel information",
+        commands,
+    )
 
 
 def collect_ipsec_dyn(dev, date, is_cluster):
     """collect dynamic ipsec information"""
-    # File to create on remote device
-    file = f"/var/tmp/{date}_{dev.hostname}_ipsec_dyn.txt"
-
-    print("Collecting IPSec dynamic VPN information")
     ike_indices = get_ike_sa_indices(dev)
-    with start_shell(dev) as ss:
-        if is_cluster:
-            ss.run(
-                f'cli -c "show security ike security-association all-members | save {file}"',
-                timeout=120,
-            )
-        else:
-            ss.run(f'cli -c "show security ike security-association | save {file}"', timeout=120)
-        for idx in ike_indices:
-            ss.run(
-                f'cli -c "show security ike security-association index {idx} detail | append {file}"',
-                timeout=120,
-            )
-        ss.run(f'cli -c "show security ike active-peer | append {file}"', timeout=120)
-        ss.run(f'cli -c "show security ipsec security-association | append {file}"', timeout=120)
-        ss.run(f'cli -c "show security ipsec statistics | append {file}"')
-        ss.run(f'cli -c "show security dynamic-vpn client version | append {file}"')
-        ss.run(f'cli -c "show security dynamic-vpn users detail | append {file}"', timeout=120)
-        ss.run(f'cli -c "show system licenses | append {file}"')
-
-    # Copy file to localhost
-    copy_file(dev, file)
-
-    # Cleanup after ourselves
-    delete_file(dev, file)
-
-    print("Done")
+    ike_summary = (
+        "show security ike security-association all-members"
+        if is_cluster
+        else "show security ike security-association"
+    )
+    commands: list[tuple[str, int | None]] = [(ike_summary, 120)]
+    commands.extend(
+        (f"show security ike security-association index {idx} detail", 120) for idx in ike_indices
+    )
+    commands.extend(
+        [
+            ("show security ike active-peer", 120),
+            ("show security ipsec security-association", 120),
+            ("show security ipsec statistics", None),
+            ("show security dynamic-vpn client version", None),
+            ("show security dynamic-vpn users detail", 120),
+            ("show system licenses", None),
+        ]
+    )
+    collect_via_shell(
+        dev,
+        date,
+        "ipsec_dyn",
+        "Collecting IPSec dynamic VPN information",
+        commands,
+    )
 
 
 def collect_high_cpu(dev, date, is_srx):
     """collect cpu statistics"""
-    # File to create on remote device
-    file = f"/var/tmp/{date}_{dev.hostname}_high_cpu.txt"
-
-    print("Collecting high cpu information")
-    with start_shell(dev) as ss:
-        ss.run(f'cli -c "show chassis routing-engine | save {file}"')
-        ss.run(f'cli -c "show system processes extensive | append {file}"')
-        ss.run(f'cli -c "show system users | append {file}"')
-        ss.run(f'cli -c "show system connections | append {file}"')
-        ss.run(f'cli -c "show system statistics | append {file}"')
-        ss.run(f'cli -c "show chassis forwarding | append {file}"')
-        if is_srx:
-            ss.run(f'cli -c "show security monitor performance spu | append {file}"')
-            ss.run(f'cli -c "show security monitor performance sess | append {file}"')
-
-    # Copy file to localhost
-    copy_file(dev, file)
-
-    # Cleanup after ourselves
-    delete_file(dev, file)
-
-    print("Done")
+    commands: list[tuple[str, int | None]] = [
+        ("show chassis routing-engine", None),
+        ("show system processes extensive", None),
+        ("show system users", None),
+        ("show system connections", None),
+        ("show system statistics", None),
+        ("show chassis forwarding", None),
+    ]
+    if is_srx:
+        commands.extend(
+            [
+                ("show security monitor performance spu", None),
+                ("show security monitor performance sess", None),
+            ]
+        )
+    collect_via_shell(
+        dev,
+        date,
+        "high_cpu",
+        "Collecting high cpu information",
+        commands,
+    )
 
 
 def collect_ospf(dev, date):
     """collect ospf information"""
-
-    # file to create on remote device
-    file = f"/var/tmp/{date}_{dev.hostname}_ospf.txt"
-
-    print("Collecting OSPF information")
-    with start_shell(dev) as ss:
-        ss.run(f'cli -c "show ospf overview | save {file}"')
-        ss.run(f'cli -c "show ospf database extensive | append {file}"')
-        ss.run(f'cli -c "show ospf detail | append {file}"')
-        ss.run(f'cli -c "show ospf route | append {file}"')
-        ss.run(f'cli -c "show ospf statistics | append {file}"')
-        ss.run(f'cli -c "show ospf interface | append {file}"')
-        ss.run(f'cli -c "show ospf log | append {file}"')
-        ss.run(f'cli -c "show route protocol ospf | append {file}"')
-
-    # copy file to localhost
-    copy_file(dev, file)
-
-    # cleanup after ourselves
-    delete_file(dev, file)
-
-    print("Done")
+    commands: list[tuple[str, int | None]] = [
+        ("show ospf overview", None),
+        ("show ospf database extensive", None),
+        ("show ospf detail", None),
+        ("show ospf route", None),
+        ("show ospf statistics", None),
+        ("show ospf interface", None),
+        ("show ospf log", None),
+        ("show route protocol ospf", None),
+    ]
+    collect_via_shell(
+        dev,
+        date,
+        "ospf",
+        "Collecting OSPF information",
+        commands,
+    )
 
 
 def collect_ospf3(dev, date):
     """collect ospf3 information"""
-
-    # file to create on remote device
-    file = f"/var/tmp/{date}_{dev.hostname}_ospf3.txt"
-
-    print("Collecting OSPF3 information")
-    with start_shell(dev) as ss:
-        ss.run(f'cli -c "show ospf3 overview | save {file}"')
-        ss.run(f'cli -c "show ospf3 database extensive | append {file}"')
-        ss.run(f'cli -c "show ospf3 detail | append {file}"')
-        ss.run(f'cli -c "show ospf3 route | append {file}"')
-        ss.run(f'cli -c "show ospf3 statistics | append {file}"')
-        ss.run(f'cli -c "show ospf3 interface | append {file}"')
-        ss.run(f'cli -c "show ospf3 log | append {file}"')
-        ss.run(f'cli -c "show route protocol ospf3 | append {file}"')
-
-    # copy file to localhost
-    copy_file(dev, file)
-
-    # cleanup after ourselves
-    delete_file(dev, file)
-
-    print("Done")
+    commands: list[tuple[str, int | None]] = [
+        ("show ospf3 overview", None),
+        ("show ospf3 database extensive", None),
+        ("show ospf3 detail", None),
+        ("show ospf3 route", None),
+        ("show ospf3 statistics", None),
+        ("show ospf3 interface", None),
+        ("show ospf3 log", None),
+        ("show route protocol ospf3", None),
+    ]
+    collect_via_shell(
+        dev,
+        date,
+        "ospf3",
+        "Collecting OSPF3 information",
+        commands,
+    )
 
 
 def collect_bgp(dev, date):
     """collect bgp information"""
-    # File to create on remote device
-    file = f"/var/tmp/{date}_{dev.hostname}_bgp.txt"
-
-    print("Collecting BGP information")
-    with start_shell(dev) as ss:
-        ss.run(f'cli -c "show bgp summary | save {file}"')
-        ss.run(f'cli -c "show bgp neighbor | append {file}"')
-        ss.run(f'cli -c "show route forwarding-table | append {file}"')
-        ss.run(f'cli -c "show route resolution unresolved | append {file}"')
-
-    # Copy file to localhost
-    copy_file(dev, file)
-
-    # Cleanup after ourselves
-    delete_file(dev, file)
-
-    print("Done")
+    commands: list[tuple[str, int | None]] = [
+        ("show bgp summary", None),
+        ("show bgp neighbor", None),
+        ("show route forwarding-table", None),
+        ("show route resolution unresolved", None),
+    ]
+    collect_via_shell(
+        dev,
+        date,
+        "bgp",
+        "Collecting BGP information",
+        commands,
+    )
 
 
 def collect_multicast(dev, date):
     """collect multicast routing information"""
-
-    # file to create on remote device
-    file = f"/var/tmp/{date}_{dev.hostname}_multicast.txt"
-
-    print("Collecting multicast information")
-    with start_shell(dev) as ss:
-        ss.run(f'cli -c "show multicast router | save {file}"')
-        ss.run(f'cli -c "show multicast statistics | append {file}"')
-        ss.run(f'cli -c "show multicast sessions | append {file}"')
-        ss.run(f'cli -c "show multicast usage | append {file}"')
-        ss.run(f'cli -c "show multicast interface | append {file}"')
-        ss.run(f'cli -c "show multicast next-hops | append {file}"')
-        ss.run(f'cli -c "show multicast rpf summary | append {file}"')
-        ss.run(f'cli -c "show interface extensive | append {file}"', timeout=120)
-        ss.run(f'cli -c "show igmp group detail | append {file}"')
-        ss.run(f'cli -c "show igmp statistics | append {file}"')
-        ss.run(f'cli -c "show igmp interface detail | append {file}"')
-        ss.run(f'cli -c "show pim statistics | append {file}"')
-        ss.run(f'cli -c "show pim neighbors | append {file}"')
-        ss.run(f'cli -c "show pim rps detail | append {file}"')
-        ss.run(f'cli -c "show pim join extensive | append {file}"', timeout=120)
-        ss.run(f'cli -c "show pim bootstrap | append {file}"')
-        ss.run(f'cli -c "show msdp source-active | append {file}"')
-        ss.run(f'cli -c "show msdp detail | append {file}"')
-        ss.run(f'cli -c "show msdp statistics | append {file}"')
-        ss.run(f'cli -c "show route | append {file}"', timeout=120)
-
-    # copy file to localhost
-    copy_file(dev, file)
-
-    # cleanup after ourselves
-    delete_file(dev, file)
-
-    print("Done")
+    commands: list[tuple[str, int | None]] = [
+        ("show multicast router", None),
+        ("show multicast statistics", None),
+        ("show multicast sessions", None),
+        ("show multicast usage", None),
+        ("show multicast interface", None),
+        ("show multicast next-hops", None),
+        ("show multicast rpf summary", None),
+        ("show interface extensive", 120),
+        ("show igmp group detail", None),
+        ("show igmp statistics", None),
+        ("show igmp interface detail", None),
+        ("show pim statistics", None),
+        ("show pim neighbors", None),
+        ("show pim rps detail", None),
+        ("show pim join extensive", 120),
+        ("show pim bootstrap", None),
+        ("show msdp source-active", None),
+        ("show msdp detail", None),
+        ("show msdp statistics", None),
+        ("show route", 120),
+    ]
+    collect_via_shell(
+        dev,
+        date,
+        "multicast",
+        "Collecting multicast information",
+        commands,
+    )
 
 
 def collect_alg(dev, date):
     """collect alg information"""
-
-    # file to create on remote device
-    file = f"/var/tmp/{date}_{dev.hostname}_alg.txt"
-
-    print("Collecting ALG information")
-    with start_shell(dev) as ss:
-        ss.run(f'cli -c "show security alg status | save {file}"')
-        ss.run(f'cli -c "show security resource-manager summary | append {file}"')
-        ss.run(f'cli -c "show security resource-manager resource active | append {file}"')
-        ss.run(f'cli -c "show security resource-manager group active | append {file}"')
-        ss.run(f'cli -c "show security flow gate | append {file}"', timeout=120)
-
-    # copy file to localhost
-    copy_file(dev, file)
-
-    # cleanup after ourselves
-    delete_file(dev, file)
-
-    print("Done")
+    commands: list[tuple[str, int | None]] = [
+        ("show security alg status", None),
+        ("show security resource-manager summary", None),
+        ("show security resource-manager resource active", None),
+        ("show security resource-manager group active", None),
+        ("show security flow gate", 120),
+    ]
+    collect_via_shell(
+        dev,
+        date,
+        "alg",
+        "Collecting ALG information",
+        commands,
+    )
 
 
 def collect_utm_av(dev, date):
     """collect utm anti-virus information"""
-
-    # file to create on remote device
-    file = f"/var/tmp/{date}_{dev.hostname}_utm_av.txt"
-
-    print("Collecting UTM anti-virus information")
-    with start_shell(dev) as ss:
-        ss.run(f'cli -c "show system licenses | save {file}"')
-        ss.run(f'cli -c "show security utm status | append {file}"')
-        ss.run(f'cli -c "show security utm session | append {file}"')
-        ss.run(f'cli -c "show security utm anti-virus status detail | append {file}"')
-        ss.run(f'cli -c "show security utm anti-virus statistics | append {file}"')
-        ss.run(f'cli -c "show chassis routing-engine | append {file}"')
-        ss.run(f'cli -c "show system processes extensive | append {file}"', timeout=120)
-
-    # copy file to localhost
-    copy_file(dev, file)
-
-    # cleanup after ourselves
-    delete_file(dev, file)
-
-    print("Done")
+    commands: list[tuple[str, int | None]] = [
+        ("show system licenses", None),
+        ("show security utm status", None),
+        ("show security utm session", None),
+        ("show security utm anti-virus status detail", None),
+        ("show security utm anti-virus statistics", None),
+        ("show chassis routing-engine", None),
+        ("show system processes extensive", 120),
+    ]
+    collect_via_shell(
+        dev,
+        date,
+        "utm_av",
+        "Collecting UTM anti-virus information",
+        commands,
+    )
 
 
 def collect_utm_as(dev, date):
     """collect utm anti-spam information"""
-
-    # file to create on remote device
-    file = f"/var/tmp/{date}_{dev.hostname}_utm_as.txt"
-
-    print("Collecting UTM anti-spam information")
-    with start_shell(dev) as ss:
-        ss.run(f'cli -c "show system licenses | save {file}"')
-        ss.run(f'cli -c "show security utm status | append {file}"')
-        ss.run(f'cli -c "show security utm session | append {file}"')
-        ss.run(f'cli -c "show security utm anti-spam status | append {file}"')
-        ss.run(f'cli -c "show security utm anti-spam statistics | append {file}"')
-        ss.run(f'cli -c "show chassis routing-engine | append {file}"')
-        ss.run(f'cli -c "show system processes extensive | append {file}"', timeout=120)
-
-    # copy file to localhost
-    copy_file(dev, file)
-
-    # cleanup after ourselves
-    delete_file(dev, file)
-
-    print("Done")
+    commands: list[tuple[str, int | None]] = [
+        ("show system licenses", None),
+        ("show security utm status", None),
+        ("show security utm session", None),
+        ("show security utm anti-spam status", None),
+        ("show security utm anti-spam statistics", None),
+        ("show chassis routing-engine", None),
+        ("show system processes extensive", 120),
+    ]
+    collect_via_shell(
+        dev,
+        date,
+        "utm_as",
+        "Collecting UTM anti-spam information",
+        commands,
+    )
 
 
 def collect_utm_web(dev, date):
     """collect utm web-filtering information"""
-
-    # file to create on remote device
-    file = f"/var/tmp/{date}_{dev.hostname}_utm_web.txt"
-
-    print("Collecting UTM web-filtering information")
-    with start_shell(dev) as ss:
-        ss.run(f'cli -c "show system licenses | save {file}"')
-        ss.run(f'cli -c "show security utm status | append {file}"')
-        ss.run(f'cli -c "show security utm session | append {file}"')
-        ss.run(f'cli -c "show security utm web-filtering status | append {file}"')
-        ss.run(f'cli -c "show security utm web-filtering statistics | append {file}"')
-        ss.run(f'cli -c "show chassis routing-engine | append {file}"')
-        ss.run(f'cli -c "show system processes extensive | append {file}"', timeout=120)
-
-    # copy file to localhost
-    copy_file(dev, file)
-
-    # cleanup after ourselves
-    delete_file(dev, file)
-
-    print("Done")
+    commands: list[tuple[str, int | None]] = [
+        ("show system licenses", None),
+        ("show security utm status", None),
+        ("show security utm session", None),
+        ("show security utm web-filtering status", None),
+        ("show security utm web-filtering statistics", None),
+        ("show chassis routing-engine", None),
+        ("show system processes extensive", 120),
+    ]
+    collect_via_shell(
+        dev,
+        date,
+        "utm_web",
+        "Collecting UTM web-filtering information",
+        commands,
+    )
 
 
 def collect_utm_content(dev, date):
     """collect utm content-filtering information"""
-
-    # file to create on remote device
-    file = f"/var/tmp/{date}_{dev.hostname}_utm_content.txt"
-
-    print("Collecting UTM content-filtering information")
-    with start_shell(dev) as ss:
-        ss.run(f'cli -c "show system licenses | save {file}"')
-        ss.run(f'cli -c "show security utm status | append {file}"')
-        ss.run(f'cli -c "show security utm session | append {file}"')
-        ss.run(f'cli -c "show security utm content-filtering statistics | append {file}"')
-
-    # copy file to localhost
-    copy_file(dev, file)
-
-    # cleanup after ourselves
-    delete_file(dev, file)
-
-    print("Done")
+    commands: list[tuple[str, int | None]] = [
+        ("show system licenses", None),
+        ("show security utm status", None),
+        ("show security utm session", None),
+        ("show security utm content-filtering statistics", None),
+    ]
+    collect_via_shell(
+        dev,
+        date,
+        "utm_content",
+        "Collecting UTM content-filtering information",
+        commands,
+    )
 
 
 def collect_coredumps(dev):
