@@ -25,6 +25,9 @@ from jnpr.junos.utils.scp import SCP
 from jnpr.junos.utils.start_shell import StartShell
 from lxml import etree
 
+SLEEP_LONG = 30
+SLEEP_SHORT = 10
+
 
 @contextmanager
 def start_shell(dev):
@@ -55,7 +58,7 @@ def copy_file(dev, file):
     # Create directory on the desktop named after the host we're connecting to
     path = os.path.expanduser(f"~/Desktop/{dev.hostname}")
     if not os.path.exists(path):
-        os.mkdir(path)
+        os.makedirs(path, exist_ok=True)
         print(f"Created destination directory: {path}")
     else:
         print("Destination directory already exists")
@@ -580,7 +583,12 @@ def main():
     # cli arguments
     parser = argparse.ArgumentParser(usage="jtac_collector.py -d <hostname> -u <username>")
     parser.add_argument("-d", "--device", help="Enter a Juniper device (name or IP)")
-    parser.add_argument("-u", "--username", help="Enter the username")
+    parser.add_argument(
+        "-u",
+        "--username",
+        default="automation",
+        help="Enter the username (default: automation)",
+    )
     parser.add_argument("-k", "--ssh-key", help="Path to SSH private key for authentication")
     parser.add_argument(
         "-a",
@@ -591,18 +599,15 @@ def main():
     args = parser.parse_args()
 
     if not args.device:
-        host = input("Device hostname")
+        host = input("Device hostname: ")
     else:
         host = args.device
 
-    if not args.username:
-        username = "automation"
-    else:
-        username = args.username
+    username = args.username
 
     date = datetime.datetime.now(tz=datetime.UTC).astimezone().strftime("%Y-%m-%d_%H-%M")
 
-    # connect to the device with IP-address, login user and passwort
+    # connect to the device with IP-address, login user and password
     connect_kwargs = {"host": host, "user": username}
     if args.ssh_key:
         connect_kwargs["ssh_private_key_file"] = args.ssh_key
@@ -636,7 +641,7 @@ def main():
         # Make sure we sleep a little after each collection so we don't tire the
         # device out to much and lose our connection
         collect_rsi(dev, date, is_cluster)
-        time.sleep(30)
+        time.sleep(SLEEP_LONG)
         collect_logs(dev, date)
 
         if args.all:
@@ -646,54 +651,54 @@ def main():
             has_ospf3 = protocols["ospf3"]
             has_multicast = protocols["multicast"]
             has_ipsec = configured_security(dev)["ipsec"] if is_srx else False
-            time.sleep(30)
+            time.sleep(SLEEP_LONG)
             collect_chassis(dev, date, is_cluster)
             if is_srx:
-                time.sleep(30)
+                time.sleep(SLEEP_LONG)
                 collect_security_flow(dev, date)
-                time.sleep(30)
+                time.sleep(SLEEP_LONG)
                 if has_ipsec:
-                    time.sleep(10)
+                    time.sleep(SLEEP_SHORT)
                     collect_ipsec_routed(dev, date, is_cluster)
-                    time.sleep(30)
+                    time.sleep(SLEEP_LONG)
                     collect_ipsec_policy(dev, date, is_cluster)
-                    time.sleep(30)
+                    time.sleep(SLEEP_LONG)
                     collect_ipsec_dyn(dev, date, is_cluster)
-            time.sleep(30)
+            time.sleep(SLEEP_LONG)
             collect_high_cpu(dev, date, is_srx)
-            time.sleep(30)
+            time.sleep(SLEEP_LONG)
             if has_bgp:
-                time.sleep(10)
+                time.sleep(SLEEP_SHORT)
                 collect_bgp(dev, date)
 
-            time.sleep(30)
+            time.sleep(SLEEP_LONG)
             if has_ospf:
-                time.sleep(10)
+                time.sleep(SLEEP_SHORT)
                 collect_ospf(dev, date)
 
-            time.sleep(30)
+            time.sleep(SLEEP_LONG)
             if has_ospf3:
-                time.sleep(10)
+                time.sleep(SLEEP_SHORT)
                 collect_ospf3(dev, date)
 
-            time.sleep(30)
+            time.sleep(SLEEP_LONG)
             if has_multicast:
-                time.sleep(10)
+                time.sleep(SLEEP_SHORT)
                 collect_multicast(dev, date)
 
             if is_srx:
-                time.sleep(30)
+                time.sleep(SLEEP_LONG)
                 collect_alg(dev, date)
-                time.sleep(30)
+                time.sleep(SLEEP_LONG)
                 collect_utm_av(dev, date)
-                time.sleep(30)
+                time.sleep(SLEEP_LONG)
                 collect_utm_as(dev, date)
-                time.sleep(30)
+                time.sleep(SLEEP_LONG)
                 collect_utm_web(dev, date)
-                time.sleep(30)
+                time.sleep(SLEEP_LONG)
                 collect_utm_content(dev, date)
 
-            time.sleep(30)
+            time.sleep(SLEEP_LONG)
             collect_coredumps(dev)
     finally:
         if dev.connected:
