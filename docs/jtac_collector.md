@@ -6,7 +6,7 @@ Turnkey workflow for gathering everything JTAC usually requests (RSI, logs, chas
 
 - Establishes a NETCONF session and stretches timeouts for slow SRX/branch platforms.
 - Detects Virtual Chassis and SRX clusters to run `request support information all-members` and cluster-specific `show chassis cluster ...` commands.
-- Generates and downloads the following bundles to `~/Desktop/<device>`:
+- Generates and downloads the following bundles to `~/Desktop/<device>/<timestamp>`:
   - `*_rsi.txt` — `request support information` output.
   - `*_varlog.tgz` — archived `/var/log` contents.
   - With `--all`: `*_chassis.txt`, high-CPU stats, multicast, OSPF, OSPF3, security flow, ALG, and UTM captures.
@@ -21,7 +21,7 @@ Turnkey workflow for gathering everything JTAC usually requests (RSI, logs, chas
 ```
 
 - If flags are omitted the script prompts interactively.
-- Desktop output directories are named after the connected device.
+- Desktop output directories are organized as `~/Desktop/<device>/<timestamp>` so each run gets its own folder.
 - Add `--all` for the full capture (default is just RSI and logs):
 
 ```bash
@@ -30,7 +30,7 @@ Turnkey workflow for gathering everything JTAC usually requests (RSI, logs, chas
 
 ## Sample Output
 
-After a successful run you can expect a desktop folder such as `~/Desktop/srx01/` containing files like:
+After a successful run you can expect a desktop folder such as `~/Desktop/srx01/2025-05-12_15-00/` containing files like:
 
 | File | Contents |
 | --- | --- |

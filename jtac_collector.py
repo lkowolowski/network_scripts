@@ -16,7 +16,9 @@ import argparse
 import datetime
 import os
 import time
+from collections.abc import Iterable, Iterator, Sequence
 from contextlib import contextmanager
+from typing import cast
 
 from jnpr.junos import Device
 from jnpr.junos.exception import ConnectError, RpcError
@@ -28,9 +30,14 @@ from lxml import etree
 SLEEP_LONG = 30
 SLEEP_SHORT = 10
 
+Command = tuple[str, int | None]
+
+SLEEP_LONG = 30
+SLEEP_SHORT = 10
+
 
 @contextmanager
-def start_shell(dev):
+def start_shell(dev: Device) -> Iterator[StartShell]:
     """StartShell wrapper that degrades gracefully if the device drops the session"""
 
     try:
@@ -40,7 +47,7 @@ def start_shell(dev):
         print(f"WARNING: device dropped the shell session: {err}")
 
 
-def delete_file(dev, file):
+def delete_file(dev: Device, file: str) -> None:
     """delete a file"""
     file_system = FS(dev)
     file_stat = file_system.stat(file)
@@ -52,16 +59,14 @@ def delete_file(dev, file):
         ss.run(f'cli -c "file delete {file}"')
 
 
-def copy_file(dev, file):
+def copy_file(dev: Device, file: str, date: str) -> None:
     """transfer a file from the device via SCP"""
 
     # Create directory on the desktop named after the host we're connecting to
-    path = os.path.expanduser(f"~/Desktop/{dev.hostname}")
-    if not os.path.exists(path):
-        os.makedirs(path, exist_ok=True)
-        print(f"Created destination directory: {path}")
-    else:
-        print("Destination directory already exists")
+    host_dir = os.path.expanduser(f"~/Desktop/{dev.hostname}")
+    path = os.path.join(host_dir, date)
+    os.makedirs(path, exist_ok=True)
+    print(f"Destination directory: {path}")
 
     file_system = FS(dev)
     file_stat = file_system.stat(file)
@@ -73,7 +78,7 @@ def copy_file(dev, file):
         scp.get(file, path)
 
 
-def run_show_cmds(ss, file, commands):
+def run_show_cmds(ss: StartShell, file: str, commands: Iterable[Command]) -> None:
     """Run a list of show commands, saving the first and appending the rest"""
 
     for index, command in enumerate(commands):
@@ -91,7 +96,14 @@ def run_show_cmds(ss, file, commands):
             ss.run(cli_cmd)
 
 
-def collect_via_shell(dev, date, label, description, commands, done_message="Done"):
+def collect_via_shell(
+    dev: Device,
+    date: str,
+    label: str,
+    description: str,
+    commands: Sequence[Command],
+    done_message: str = "Done",
+) -> None:
     """Generic collector helper that handles remote file lifecycle"""
 
     file = f"/var/tmp/{date}_{dev.hostname}_{label}.txt"
@@ -100,13 +112,13 @@ def collect_via_shell(dev, date, label, description, commands, done_message="Don
         with start_shell(dev) as ss:
             run_show_cmds(ss, file, commands)
     finally:
-        copy_file(dev, file)
+        copy_file(dev, file, date)
         delete_file(dev, file)
         print(done_message)
 
 
 # list of functions we'll call to generate and then collect the data
-def collect_rsi(dev, date, is_cluster):
+def collect_rsi(dev: Device, date: str, is_cluster: bool) -> None:
     """collect 'request support information'"""
     command = (
         "request support information all-members" if is_cluster else "request support information"
@@ -120,7 +132,7 @@ def collect_rsi(dev, date, is_cluster):
     )
 
 
-def collect_logs(dev, date):
+def collect_logs(dev: Device, date: str) -> None:
     """collect logs"""
     # File to create on remote device
     file = f"/var/tmp/{date}_{dev.hostname}_varlog.tgz"
@@ -131,7 +143,7 @@ def collect_logs(dev, date):
     file_system.tgz("/var/log/*", file)
 
     # Copy file to localhost
-    copy_file(dev, file)
+    copy_file(dev, file, date)
 
     # cleanup after ourselves
     delete_file(dev, file)
@@ -139,7 +151,7 @@ def collect_logs(dev, date):
     print("Done")
 
 
-def collect_chassis(dev, date, is_cluster):
+def collect_chassis(dev: Device, date: str, is_cluster: bool) -> None:
     """collect chassis information"""
     commands: list[tuple[str, int | None]] = [("show chassis fpc pic-status", None)]
     if is_cluster:
@@ -162,7 +174,7 @@ def collect_chassis(dev, date, is_cluster):
     )
 
 
-def collect_security_flow(dev, date):
+def collect_security_flow(dev: Device, date: str) -> None:
     """collect security flow information"""
     commands: list[tuple[str, int | None]] = [
         ("show security flow session summary", 120),
@@ -179,7 +191,7 @@ def collect_security_flow(dev, date):
     )
 
 
-def get_ike_sa_indices(dev):
+def get_ike_sa_indices(dev: Device) -> list[str]:
     """enumerate IKE security association indices via RPC"""
     try:
         data = dev.rpc.get_ike_security_associations_information()
@@ -192,7 +204,7 @@ def get_ike_sa_indices(dev):
         return []
 
 
-def collect_ipsec_routed(dev, date, is_cluster):
+def collect_ipsec_routed(dev: Device, date: str, is_cluster: bool) -> None:
     """collect ipsec routed tunnel information"""
     ike_indices = get_ike_sa_indices(dev)
     ike_summary = (
@@ -230,7 +242,7 @@ def collect_ipsec_routed(dev, date, is_cluster):
     )
 
 
-def collect_ipsec_policy(dev, date, is_cluster):
+def collect_ipsec_policy(dev: Device, date: str, is_cluster: bool) -> None:
     """collect ipsec policy tunnel information"""
     ike_indices = get_ike_sa_indices(dev)
     ike_summary = (
@@ -268,7 +280,7 @@ def collect_ipsec_policy(dev, date, is_cluster):
     )
 
 
-def collect_ipsec_dyn(dev, date, is_cluster):
+def collect_ipsec_dyn(dev: Device, date: str, is_cluster: bool) -> None:
     """collect dynamic ipsec information"""
     ike_indices = get_ike_sa_indices(dev)
     ike_summary = (
@@ -299,7 +311,7 @@ def collect_ipsec_dyn(dev, date, is_cluster):
     )
 
 
-def collect_high_cpu(dev, date, is_srx):
+def collect_high_cpu(dev: Device, date: str, is_srx: bool) -> None:
     """collect cpu statistics"""
     commands: list[tuple[str, int | None]] = [
         ("show chassis routing-engine", None),
@@ -325,7 +337,7 @@ def collect_high_cpu(dev, date, is_srx):
     )
 
 
-def collect_ospf(dev, date):
+def collect_ospf(dev: Device, date: str) -> None:
     """collect ospf information"""
     commands: list[tuple[str, int | None]] = [
         ("show ospf overview", None),
@@ -346,7 +358,7 @@ def collect_ospf(dev, date):
     )
 
 
-def collect_ospf3(dev, date):
+def collect_ospf3(dev: Device, date: str) -> None:
     """collect ospf3 information"""
     commands: list[tuple[str, int | None]] = [
         ("show ospf3 overview", None),
@@ -367,7 +379,7 @@ def collect_ospf3(dev, date):
     )
 
 
-def collect_bgp(dev, date):
+def collect_bgp(dev: Device, date: str) -> None:
     """collect bgp information"""
     commands: list[tuple[str, int | None]] = [
         ("show bgp summary", None),
@@ -384,7 +396,7 @@ def collect_bgp(dev, date):
     )
 
 
-def collect_multicast(dev, date):
+def collect_multicast(dev: Device, date: str) -> None:
     """collect multicast routing information"""
     commands: list[tuple[str, int | None]] = [
         ("show multicast router", None),
@@ -417,7 +429,7 @@ def collect_multicast(dev, date):
     )
 
 
-def collect_alg(dev, date):
+def collect_alg(dev: Device, date: str) -> None:
     """collect alg information"""
     commands: list[tuple[str, int | None]] = [
         ("show security alg status", None),
@@ -435,7 +447,7 @@ def collect_alg(dev, date):
     )
 
 
-def collect_utm_av(dev, date):
+def collect_utm_av(dev: Device, date: str) -> None:
     """collect utm anti-virus information"""
     commands: list[tuple[str, int | None]] = [
         ("show system licenses", None),
@@ -455,7 +467,7 @@ def collect_utm_av(dev, date):
     )
 
 
-def collect_utm_as(dev, date):
+def collect_utm_as(dev: Device, date: str) -> None:
     """collect utm anti-spam information"""
     commands: list[tuple[str, int | None]] = [
         ("show system licenses", None),
@@ -475,7 +487,7 @@ def collect_utm_as(dev, date):
     )
 
 
-def collect_utm_web(dev, date):
+def collect_utm_web(dev: Device, date: str) -> None:
     """collect utm web-filtering information"""
     commands: list[tuple[str, int | None]] = [
         ("show system licenses", None),
@@ -495,7 +507,7 @@ def collect_utm_web(dev, date):
     )
 
 
-def collect_utm_content(dev, date):
+def collect_utm_content(dev: Device, date: str) -> None:
     """collect utm content-filtering information"""
     commands: list[tuple[str, int | None]] = [
         ("show system licenses", None),
@@ -512,7 +524,7 @@ def collect_utm_content(dev, date):
     )
 
 
-def collect_coredumps(dev):
+def collect_coredumps(dev: Device, date: str) -> None:
     """collect core dumps from the device"""
 
     print("Checking for core dumps")
@@ -539,10 +551,10 @@ def collect_coredumps(dev):
 
     print(f"Found {len(paths)} core dump file(s)")
     for path in sorted(paths):
-        copy_file(dev, path)
+        copy_file(dev, path, date)
 
 
-def configured_protocols(dev):
+def configured_protocols(dev: Device) -> dict[str, bool]:
     """return protocol enablement flags (single RPC for <protocols>)"""
 
     xml_filter = "<configuration><protocols/></configuration>"
@@ -556,7 +568,7 @@ def configured_protocols(dev):
     }
 
 
-def configured_security(dev):
+def configured_security(dev: Device) -> dict[str, bool]:
     """return security-feature enablement flags (single RPC for <security>)"""
 
     xml_filter = "<configuration><security/></configuration>"
@@ -568,7 +580,7 @@ def configured_security(dev):
 
 
 # Method for human readable size-output
-def sizeof_fmt(num, suffix="B"):
+def sizeof_fmt(num: float, suffix: str = "B") -> str:
     """make size numbers human readable"""
     for unit in ["", "Ki", "Mi", "Gi", "Ti", "Pi", "Ei", "Zi"]:
         if abs(num) < 1024.0:
@@ -577,10 +589,7 @@ def sizeof_fmt(num, suffix="B"):
     return f"{num:.1f}Yi{suffix}"
 
 
-def main():
-    """main"""
-
-    # cli arguments
+def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(usage="jtac_collector.py -d <hostname> -u <username>")
     parser.add_argument("-d", "--device", help="Enter a Juniper device (name or IP)")
     parser.add_argument(
@@ -596,110 +605,119 @@ def main():
         action="store_true",
         help="Collect everything (default is just RSI and logs)",
     )
+    return parser
+
+
+def run_collections(
+    dev: Device,
+    date: str,
+    is_cluster: bool,
+    is_srx: bool,
+    collect_all: bool,
+) -> None:
+    collect_rsi(dev, date, is_cluster)
+    time.sleep(SLEEP_LONG)
+    collect_logs(dev, date)
+
+    if not collect_all:
+        return
+
+    protocols = configured_protocols(dev)
+    has_bgp = protocols["bgp"]
+    has_ospf = protocols["ospf"]
+    has_ospf3 = protocols["ospf3"]
+    has_multicast = protocols["multicast"]
+    has_ipsec = configured_security(dev)["ipsec"] if is_srx else False
+
+    time.sleep(SLEEP_LONG)
+    collect_chassis(dev, date, is_cluster)
+    if is_srx:
+        time.sleep(SLEEP_LONG)
+        collect_security_flow(dev, date)
+        time.sleep(SLEEP_LONG)
+        if has_ipsec:
+            time.sleep(SLEEP_SHORT)
+            collect_ipsec_routed(dev, date, is_cluster)
+            time.sleep(SLEEP_LONG)
+            collect_ipsec_policy(dev, date, is_cluster)
+            time.sleep(SLEEP_LONG)
+            collect_ipsec_dyn(dev, date, is_cluster)
+
+    time.sleep(SLEEP_LONG)
+    collect_high_cpu(dev, date, is_srx)
+    time.sleep(SLEEP_LONG)
+    if has_bgp:
+        time.sleep(SLEEP_SHORT)
+        collect_bgp(dev, date)
+
+    time.sleep(SLEEP_LONG)
+    if has_ospf:
+        time.sleep(SLEEP_SHORT)
+        collect_ospf(dev, date)
+
+    time.sleep(SLEEP_LONG)
+    if has_ospf3:
+        time.sleep(SLEEP_SHORT)
+        collect_ospf3(dev, date)
+
+    time.sleep(SLEEP_LONG)
+    if has_multicast:
+        time.sleep(SLEEP_SHORT)
+        collect_multicast(dev, date)
+
+    if is_srx:
+        time.sleep(SLEEP_LONG)
+        collect_alg(dev, date)
+        time.sleep(SLEEP_LONG)
+        collect_utm_av(dev, date)
+        time.sleep(SLEEP_LONG)
+        collect_utm_as(dev, date)
+        time.sleep(SLEEP_LONG)
+        collect_utm_web(dev, date)
+        time.sleep(SLEEP_LONG)
+        collect_utm_content(dev, date)
+
+    time.sleep(SLEEP_LONG)
+    collect_coredumps(dev, date)
+
+
+def main() -> None:
+    """main"""
+
+    parser = build_parser()
     args = parser.parse_args()
 
-    if not args.device:
-        host = input("Device hostname: ")
-    else:
-        host = args.device
-
+    host = args.device or input("Device hostname: ")
     username = args.username
 
     date = datetime.datetime.now(tz=datetime.UTC).astimezone().strftime("%Y-%m-%d_%H-%M")
 
-    # connect to the device with IP-address, login user and password
     connect_kwargs = {"host": host, "user": username}
     if args.ssh_key:
         connect_kwargs["ssh_private_key_file"] = args.ssh_key
-    dev = Device(**connect_kwargs)
+    dev = cast(Device, Device(**connect_kwargs))
     try:
         dev.open()
     except ConnectError as err:
         print(f"ERROR: failed to connect to {host}: {err}")
         return
-    # needed for file compression on srx340 because they are slow
     dev.timeout = 120
     dev.banner_timeout = 60  # pyright: ignore[reportAttributeAccessIssue]
 
     try:
         print("Connected successfully...")
 
-        # define some bits based on facts we collected
         if dev.facts["vc_mode"] == "Enabled":
             print("Working with a Virtual-Chassis cluster")
         if dev.facts["srx_cluster"]:
             print("Working with an SRX cluster")
         is_cluster = dev.facts["vc_mode"] == "Enabled" or dev.facts["srx_cluster"]
 
-        if "SRX" in dev.facts["model"]:
+        is_srx = "SRX" in dev.facts["model"]
+        if is_srx:
             print(f"Working with a {dev.facts['model']}")
-            is_srx = True
-        else:
-            is_srx = False
 
-        # Collect all our bits
-        # Make sure we sleep a little after each collection so we don't tire the
-        # device out to much and lose our connection
-        collect_rsi(dev, date, is_cluster)
-        time.sleep(SLEEP_LONG)
-        collect_logs(dev, date)
-
-        if args.all:
-            protocols = configured_protocols(dev)
-            has_bgp = protocols["bgp"]
-            has_ospf = protocols["ospf"]
-            has_ospf3 = protocols["ospf3"]
-            has_multicast = protocols["multicast"]
-            has_ipsec = configured_security(dev)["ipsec"] if is_srx else False
-            time.sleep(SLEEP_LONG)
-            collect_chassis(dev, date, is_cluster)
-            if is_srx:
-                time.sleep(SLEEP_LONG)
-                collect_security_flow(dev, date)
-                time.sleep(SLEEP_LONG)
-                if has_ipsec:
-                    time.sleep(SLEEP_SHORT)
-                    collect_ipsec_routed(dev, date, is_cluster)
-                    time.sleep(SLEEP_LONG)
-                    collect_ipsec_policy(dev, date, is_cluster)
-                    time.sleep(SLEEP_LONG)
-                    collect_ipsec_dyn(dev, date, is_cluster)
-            time.sleep(SLEEP_LONG)
-            collect_high_cpu(dev, date, is_srx)
-            time.sleep(SLEEP_LONG)
-            if has_bgp:
-                time.sleep(SLEEP_SHORT)
-                collect_bgp(dev, date)
-
-            time.sleep(SLEEP_LONG)
-            if has_ospf:
-                time.sleep(SLEEP_SHORT)
-                collect_ospf(dev, date)
-
-            time.sleep(SLEEP_LONG)
-            if has_ospf3:
-                time.sleep(SLEEP_SHORT)
-                collect_ospf3(dev, date)
-
-            time.sleep(SLEEP_LONG)
-            if has_multicast:
-                time.sleep(SLEEP_SHORT)
-                collect_multicast(dev, date)
-
-            if is_srx:
-                time.sleep(SLEEP_LONG)
-                collect_alg(dev, date)
-                time.sleep(SLEEP_LONG)
-                collect_utm_av(dev, date)
-                time.sleep(SLEEP_LONG)
-                collect_utm_as(dev, date)
-                time.sleep(SLEEP_LONG)
-                collect_utm_web(dev, date)
-                time.sleep(SLEEP_LONG)
-                collect_utm_content(dev, date)
-
-            time.sleep(SLEEP_LONG)
-            collect_coredumps(dev)
+        run_collections(dev, date, is_cluster, is_srx, args.all)
     finally:
         if dev.connected:
             try:
